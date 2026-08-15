@@ -1,0 +1,7 @@
+.env
+venv/
+__pycache__/
+*.pyc
+credentials/
+render_env_values.txt
+server.log
