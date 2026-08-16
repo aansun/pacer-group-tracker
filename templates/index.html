@@ -95,6 +95,9 @@
     }
     .pill.ok { background: #ecfdf5; color: var(--primary-dark); }
     .pill.err { background: #fef2f2; color: #b91c1c; }
+    .pill.source-scheduled { background: #eff6ff; color: #1d4ed8; }
+    .pill.source-manual { background: #fdf4ff; color: #a21caf; }
+    .pill.source-cron { background: #fffbeb; color: #b45309; }
 
     .actions { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
     .btn, button.btn-submit {
@@ -195,11 +198,37 @@
         </svg>
       </div>
       <div>
-        <p class="status-title">Jadwal &amp; Status Sync</p>
+        <p class="status-title">Jadwal Sync</p>
         <p class="status-line">Otomatis tiap hari jam <b>{{ schedule_times|join(', ') }}</b> (WITA)</p>
+      </div>
+    </div>
+
+    <div class="card status-card">
+      <div class="status-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M4 4v5h5M20 20v-5h-5M4.6 15a8 8 0 0 0 14.8-3M19.4 9a8 8 0 0 0-14.8 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div>
+        <p class="status-title">Riwayat Sync Terakhir</p>
         {% if state %}
           <p class="status-line">
-            Terakhir: <b>{{ state.last_run_at }}</b> &middot; {{ state.source }}
+            Waktu: <b>{{ state.last_run_at }}</b>
+          </p>
+          <p class="status-line">
+            Metode:
+            {% if state.source == 'scheduled' %}
+              <span class="pill source-scheduled">Otomatis (Terjadwal)</span>
+            {% elif state.source == 'manual' %}
+              <span class="pill source-manual">Manual (tombol Sync)</span>
+            {% elif state.source == 'cron' %}
+              <span class="pill source-cron">Cron Eksternal</span>
+            {% else %}
+              <span class="pill">{{ state.source }}</span>
+            {% endif %}
+          </p>
+          <p class="status-line">
+            Hasil:
             {% if state.error %}
               <span class="pill err">gagal</span>
             {% else %}
@@ -219,6 +248,7 @@
         Hubungkan Anggota
       </a>
       <form class="inline" method="post" action="{{ url_for('sync') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button class="btn btn-secondary btn-submit" type="submit">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 4v5h5M20 20v-5h-5M4.6 15a8 8 0 0 0 14.8-3M19.4 9a8 8 0 0 0-14.8 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           Sync Sekarang

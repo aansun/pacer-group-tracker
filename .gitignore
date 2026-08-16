@@ -5,3 +5,5 @@ __pycache__/
 credentials/
 render_env_values.txt
 server.log
+.DS_Store
+.scannerwork/

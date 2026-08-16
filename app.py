@@ -5,7 +5,8 @@ import secrets
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
-from flask import Flask, render_template, redirect, url_for, flash, request, session
+from flask import Flask, render_template, redirect, url_for, flash, request, session, jsonify
+from flask_wtf import CSRFProtect
 
 import config
 from services import member_store, sync_state
@@ -14,8 +15,37 @@ from sync import run_sync
 
 app = Flask(__name__)
 app.secret_key = config.FLASK_SECRET_KEY
+app.permanent_session_lifetime = datetime.timedelta(minutes=config.SESSION_TIMEOUT_MINUTES)
+
+# Proteksi CSRF untuk seluruh form/POST berbasis session (login, sync manual).
+# /sync/cron dikecualikan karena memakai autentikasi token terpisah (bukan cookie session).
+csrf = CSRFProtect(app)
 
 SCHEDULE_TIMES = ["08:00", "12:00", "15:00", "21:00", "23:55"]
+
+
+@app.before_request
+def _enforce_session_timeout():
+    """Paksa logout kalau tidak ada aktivitas selama SESSION_TIMEOUT_MINUTES.
+
+    Setiap request yang datang dari user yang sedang login akan me-refresh
+    waktu aktivitas terakhir (sliding expiration), jadi timeout dihitung dari
+    request TERAKHIR, bukan dari waktu login.
+    """
+    if not session.get("logged_in"):
+        return
+
+    now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+    last_seen = session.get("last_activity")
+    timeout_seconds = config.SESSION_TIMEOUT_MINUTES * 60
+
+    if last_seen is not None and (now - last_seen) > timeout_seconds:
+        session.clear()
+        flash("Sesi berakhir karena tidak ada aktivitas selama 1 jam. Silakan login kembali.", "error")
+        return redirect(url_for("login", next=request.path))
+
+    session["last_activity"] = now
+    session.permanent = True
 
 
 def _schedule_trigger(times):
@@ -44,12 +74,14 @@ def login():
         if valid:
             session["logged_in"] = True
             session["username"] = username
+            session["last_activity"] = datetime.datetime.now(datetime.timezone.utc).timestamp()
+            session.permanent = True
             return redirect(request.args.get("next") or url_for("index"))
         flash("Username atau password salah.", "error")
     return render_template("login.html")
 
 
-@app.route("/logout")
+@app.route("/logout", methods=["GET"])
 def logout():
     session.clear()
     return redirect(url_for("login"))
@@ -65,7 +97,7 @@ def scheduled_sync():
         sync_state.record("scheduled", 0, 0, error=str(exc))
 
 
-@app.route("/")
+@app.route("/", methods=["GET"])
 @login_required
 def index():
     members = member_store.list_members()
@@ -78,14 +110,14 @@ def index():
     )
 
 
-@app.route("/pacer/connect")
+@app.route("/pacer/connect", methods=["GET"])
 @login_required
 def pacer_connect():
     state = secrets.token_urlsafe(16)
     return redirect(get_authorization_url(state))
 
 
-@app.route("/pacer/callback")
+@app.route("/pacer/callback", methods=["GET"])
 @login_required
 def pacer_callback():
     auth_result = request.args.get("auth_result")
@@ -137,6 +169,39 @@ def sync():
     return redirect(url_for("index"))
 
 
+@app.route("/sync/cron", methods=["POST", "GET"])
+@csrf.exempt  # NOSONAR - aman: endpoint ini tidak memakai session cookie sama
+# sekali (autentikasi via token X-Cron-Token yang dibandingkan dengan
+# secrets.compare_digest), sehingga tidak rentan terhadap serangan CSRF yang
+# mengeksploitasi cookie browser. Exempt ini disengaja, bukan kelalaian.
+def sync_cron():
+    """Endpoint khusus untuk cron eksternal (mis. cron-job.org), tanpa login/session.
+
+    Autentikasi pakai token rahasia (CRON_SYNC_TOKEN), dikirim via:
+    - header 'X-Cron-Token: <token>', atau
+    - query/body param '?token=<token>'
+    """
+    expected = config.CRON_SYNC_TOKEN
+    if not expected:
+        return jsonify({"ok": False, "error": "CRON_SYNC_TOKEN belum diset di server"}), 503
+
+    provided = request.headers.get("X-Cron-Token") or request.values.get("token") or ""
+    if not secrets.compare_digest(provided, expected):
+        return jsonify({"ok": False, "error": "token tidak valid"}), 401
+
+    try:
+        updated, total = run_sync()
+        sync_state.record("cron", len(updated), len(total))
+        return jsonify({
+            "ok": True,
+            "updated_count": len(updated),
+            "total_count": len(total),
+        })
+    except Exception as exc:
+        sync_state.record("cron", 0, 0, error=str(exc))
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
 scheduler = BackgroundScheduler(timezone="Asia/Makassar")
 scheduler.add_job(
     scheduled_sync,
@@ -148,4 +213,4 @@ scheduler.start()
 
 
 if __name__ == "__main__":
-    app.run(debug=True, use_reloader=False)
+    app.run(debug=config.FLASK_DEBUG, use_reloader=False)

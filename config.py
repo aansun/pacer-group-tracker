@@ -5,8 +5,8 @@ load_dotenv()
 
 PACER_CLIENT_ID = os.getenv("PACER_CLIENT_ID")
 PACER_CLIENT_SECRET = os.getenv("PACER_CLIENT_SECRET")
-PACER_AUTH_BASE_URL = os.getenv("PACER_AUTH_BASE_URL", "http://developer.mypacer.com")
-PACER_API_BASE_URL = os.getenv("PACER_API_BASE_URL", "http://openapi.mypacer.com")
+PACER_AUTH_BASE_URL = os.getenv("PACER_AUTH_BASE_URL", "https://developer.mypacer.com")
+PACER_API_BASE_URL = os.getenv("PACER_API_BASE_URL", "https://openapi.mypacer.com")
 PACER_REDIRECT_URI = os.getenv("PACER_REDIRECT_URI")
 
 # Isi salah satu: GOOGLE_SERVICE_ACCOUNT_JSON (isi file JSON dalam satu baris, dipakai di Render)
@@ -24,3 +24,14 @@ FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "change-me")
 
 LOGIN_USERNAME = os.getenv("LOGIN_USERNAME", "admin")
 LOGIN_PASSWORD = os.getenv("LOGIN_PASSWORD", "change-me")
+
+# Token rahasia khusus untuk trigger sync dari cron eksternal (mis. cron-job.org),
+# tanpa perlu login/session. Kosongkan untuk menonaktifkan endpoint ini.
+CRON_SYNC_TOKEN = os.getenv("CRON_SYNC_TOKEN", "")
+
+# Auto-logout kalau tidak ada aktivitas selama sekian menit (default 60 = 1 jam)
+SESSION_TIMEOUT_MINUTES = int(os.getenv("SESSION_TIMEOUT_MINUTES", "60"))
+
+# Werkzeug debug mode HARUS mati di production (bisa membuka remote code execution
+# lewat debugger interaktif kalau aktif). Set "true" hanya untuk development lokal.
+FLASK_DEBUG = os.getenv("FLASK_DEBUG", "false").lower() == "true"

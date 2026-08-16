@@ -13,11 +13,17 @@ def _encoded_signature():
     dokumentasi resmi Pacer menulis "pacer_oauth2" tapi itu tidak bekerja
     terhadap API live; dikonfirmasi lewat reference implementation
     ankamv.medium.com "Using Python to connect to Pacer's API step by step".
+
+    NOTE keamanan: MD5 dipakai di sini BUKAN untuk keperluan kriptografi kita
+    sendiri, melainkan karena ini adalah skema signature yang diwajibkan oleh
+    Pacer API pihak ketiga (di luar kendali kita) — bukan untuk hashing
+    password/data sensitif milik aplikasi ini. Algoritma tidak bisa diganti
+    tanpa memutus kompatibilitas dengan Pacer API.
     """
-    app_secret_hash = hashlib.md5(
+    app_secret_hash = hashlib.md5(  # NOSONAR - wajib MD5, ditentukan skema OAuth Pacer API
         (config.PACER_CLIENT_SECRET + "pacer_oauth").encode("utf-8")
     ).hexdigest()
-    return hashlib.md5(
+    return hashlib.md5(  # NOSONAR - wajib MD5, ditentukan skema OAuth Pacer API
         (app_secret_hash + config.PACER_CLIENT_ID).encode("utf-8")
     ).hexdigest()
 
