@@ -5,7 +5,7 @@ import config
 from services import member_store, sheets_client
 from services.pacer_client import PacerClient, refresh_access_token
 
-HEADER = ["Nama", "Tanggal", "Langkah", "Jarak (m)", "Kalori", "Waktu Aktif (s)"]
+HEADER = ["Nama", "Tanggal", "Langkah", "Jarak (m)", "Kalori", "Waktu Aktif (s)", "User ID"]
 FETCH_DAYS_BACK = 2  # cukup untuk menangkap update hari ini + koreksi keterlambatan sync sebelumnya
 
 
@@ -37,21 +37,37 @@ def _fetch_recent_rows(days_back):
 
         for day in daily:
             rows.append([
-                member["display_name"],
+                member["display_name"] or user_id,
                 day.get("recorded_for_date"),
                 day.get("steps", 0),
                 day.get("total_distance", 0),
                 day.get("calories", 0),
                 day.get("active_time", 0),
+                user_id,
             ])
 
     return rows
 
 
+def _row_key(row):
+    """Identitas unik per baris untuk upsert.
+
+    Baris baru selalu punya User ID (kolom ke-7), jadi di-key berdasarkan itu +
+    tanggal. Baris lama (sebelum kolom User ID ditambahkan) belum punya nilai ini,
+    jadi fallback ke (Nama, Tanggal) seperti perilaku lama supaya histori lama tidak
+    dobel/tertimpa. Key by user_id mencegah tabrakan saat display_name kosong atau
+    sama antar-anggota (mis. akun Apple SSO dengan nama disembunyikan).
+    """
+    user_id = row[6] if len(row) > 6 and row[6] else None
+    if user_id:
+        return ("uid", user_id, row[1])
+    return ("name", row[0], row[1])
+
+
 def _merge(existing_rows, new_rows):
-    merged = {(row[0], row[1]): row for row in existing_rows}
+    merged = {_row_key(row): row for row in existing_rows}
     for row in new_rows:
-        merged[(row[0], row[1])] = row
+        merged[_row_key(row)] = row
     return sorted(merged.values(), key=lambda r: (r[0], r[1]))
 
 

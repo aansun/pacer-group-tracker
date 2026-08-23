@@ -138,15 +138,20 @@ def pacer_callback():
 
         client = PacerClient(token_data["access_token"])
         user_info = client.get_user_info(user_id)
+        # .get(key, default) tidak cukup: Pacer bisa balikin display_name="" (key ada,
+        # nilai kosong) untuk user yang daftar via Apple SSO dengan nama disembunyikan
+        # ("Hide My Email"), jadi default itu tidak pernah ke-trigger. Pakai `or` supaya
+        # string kosong tetap fallback ke user_id.
+        display_name = user_info.get("display_name") or user_id
 
         member_store.upsert_member(
             user_id=user_id,
-            display_name=user_info.get("display_name", user_id),
+            display_name=display_name,
             access_token=token_data["access_token"],
             refresh_token=token_data["refresh_token"],
             expires_in=token_data["expires_in"],
         )
-        flash(f"Anggota '{user_info.get('display_name', user_id)}' berhasil terhubung.", "success")
+        flash(f"Anggota '{display_name}' berhasil terhubung.", "success")
     except Exception as exc:
         flash(f"Gagal menghubungkan anggota: {exc}", "error")
 
