@@ -236,6 +236,11 @@
             {% endif %}
           </p>
           {% if state.error %}<p class="status-line" style="color:#b91c1c">{{ state.error }}</p>{% endif %}
+          {% if state.failed_members %}
+            <p class="status-line" style="color:#b91c1c">
+              Perlu hubungkan ulang: {{ state.failed_members|map(attribute=0)|join(', ') }}
+            </p>
+          {% endif %}
         {% else %}
           <p class="status-line">Belum pernah sync sejak server terakhir start.</p>
         {% endif %}

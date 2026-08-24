@@ -90,8 +90,8 @@ def logout():
 def scheduled_sync():
     print(f"[scheduler] menjalankan sync otomatis {datetime.datetime.now().isoformat()}")
     try:
-        updated, total = run_sync()
-        sync_state.record("scheduled", len(updated), len(total))
+        updated, total, failed_members = run_sync()
+        sync_state.record("scheduled", len(updated), len(total), failed_members=failed_members)
     except Exception as exc:
         print(f"[scheduler] sync otomatis gagal: {exc}")
         sync_state.record("scheduled", 0, 0, error=str(exc))
@@ -162,12 +162,18 @@ def pacer_callback():
 @login_required
 def sync():
     try:
-        updated, total = run_sync()
-        sync_state.record("manual", len(updated), len(total))
+        updated, total, failed_members = run_sync()
+        sync_state.record("manual", len(updated), len(total), failed_members=failed_members)
         flash(
             f"Sync berhasil: {len(updated)} baris diperbarui, {len(total)} baris total di Google Sheets.",
             "success",
         )
+        if failed_members:
+            names = ", ".join(name for name, _ in failed_members)
+            flash(
+                f"{len(failed_members)} anggota gagal disinkron, perlu hubungkan ulang: {names}.",
+                "error",
+            )
     except Exception as exc:
         sync_state.record("manual", 0, 0, error=str(exc))
         flash(f"Sync gagal: {exc}", "error")
@@ -195,12 +201,13 @@ def sync_cron():
         return jsonify({"ok": False, "error": "token tidak valid"}), 401
 
     try:
-        updated, total = run_sync()
-        sync_state.record("cron", len(updated), len(total))
+        updated, total, failed_members = run_sync()
+        sync_state.record("cron", len(updated), len(total), failed_members=failed_members)
         return jsonify({
             "ok": True,
             "updated_count": len(updated),
             "total_count": len(total),
+            "failed_members": [name for name, _ in failed_members],
         })
     except Exception as exc:
         sync_state.record("cron", 0, 0, error=str(exc))

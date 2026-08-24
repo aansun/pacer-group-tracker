@@ -25,15 +25,23 @@ def _fetch_recent_rows(days_back):
     start_date = end_date - datetime.timedelta(days=days_back - 1)
 
     rows = []
+    failed = []
     for user_id, member in members.items():
-        access_token = _ensure_fresh_token(user_id, member)
-        client = PacerClient(access_token)
+        try:
+            access_token = _ensure_fresh_token(user_id, member)
+            client = PacerClient(access_token)
 
-        daily = client.get_daily_activity_summary(
-            user_id,
-            start_date=start_date.isoformat(),
-            end_date=end_date.isoformat(),
-        )
+            daily = client.get_daily_activity_summary(
+                user_id,
+                start_date=start_date.isoformat(),
+                end_date=end_date.isoformat(),
+            )
+        except Exception as exc:
+            # Satu anggota dengan refresh_token invalid (mis. akses dicabut di
+            # sisi Pacer) tidak boleh menggagalkan sync anggota lain. Dicatat
+            # supaya admin tahu siapa yang perlu hubungkan ulang.
+            failed.append((member["display_name"] or user_id, str(exc)))
+            continue
 
         for day in daily:
             rows.append([
@@ -46,7 +54,7 @@ def _fetch_recent_rows(days_back):
                 user_id,
             ])
 
-    return rows
+    return rows, failed
 
 
 def _row_key(row):
@@ -75,15 +83,19 @@ def run_sync():
     """Ambil data terbaru dari Pacer (beberapa hari terakhir) dan gabungkan
     (upsert per anggota+tanggal) ke histori yang sudah ada di Google Sheets."""
     _, existing_rows = sheets_client.read_rows(config.GOOGLE_SHEET_WORKSHEET)
-    new_rows = _fetch_recent_rows(FETCH_DAYS_BACK)
+    new_rows, failed_members = _fetch_recent_rows(FETCH_DAYS_BACK)
     merged_rows = _merge(existing_rows, new_rows)
 
     sheets_client.write_rows(config.GOOGLE_SHEET_WORKSHEET, HEADER, merged_rows)
     print(f"Data tersinkron ke Google Sheets ({len(merged_rows)} baris total, {len(new_rows)} baris diperbarui)")
+    if failed_members:
+        print(f"Gagal sync untuk {len(failed_members)} anggota: {failed_members}")
 
-    return new_rows, merged_rows
+    return new_rows, merged_rows, failed_members
 
 
 if __name__ == "__main__":
-    updated, total = run_sync()
+    updated, total, failed_members = run_sync()
     print(f"Sync selesai, {len(updated)} baris diperbarui, {len(total)} baris total.")
+    if failed_members:
+        print(f"Anggota gagal disinkron: {failed_members}")
