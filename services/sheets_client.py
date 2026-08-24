@@ -9,6 +9,10 @@ import config
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 _gc = None
+# Cache per spreadsheet_id: open_by_key() melakukan fetch metadata (1 API read)
+# setiap kali dipanggil. Tanpa cache ini, tiap read_rows/write_rows membuka ulang
+# spreadsheet dan gampang menabrak quota "Read requests per minute" Google Sheets API.
+_spreadsheets = {}
 
 
 def _extract_sheet_id(value):
@@ -29,13 +33,22 @@ def _client():
             config.GOOGLE_SERVICE_ACCOUNT_FILE, scopes=SCOPES
         )
 
-    _gc = gspread.authorize(creds)
+    # BackOffHTTPClient otomatis retry dengan exponential backoff saat Google
+    # membalas 429 (quota exceeded), alih-alih langsung melempar APIError.
+    _gc = gspread.authorize(creds, http_client=gspread.BackOffHTTPClient)
     return _gc
+
+
+def _open_spreadsheet(spreadsheet_id):
+    key = _extract_sheet_id(spreadsheet_id)
+    if key not in _spreadsheets:
+        _spreadsheets[key] = _client().open_by_key(key)
+    return _spreadsheets[key]
 
 
 def get_worksheet(title, spreadsheet_id=None, rows=1000, cols=20):
     spreadsheet_id = spreadsheet_id or config.GOOGLE_SHEET_ID
-    sheet = _client().open_by_key(_extract_sheet_id(spreadsheet_id))
+    sheet = _open_spreadsheet(spreadsheet_id)
     try:
         return sheet.worksheet(title)
     except gspread.exceptions.WorksheetNotFound:
