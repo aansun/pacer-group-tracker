@@ -8,6 +8,20 @@ WORKSHEET = config.GOOGLE_MEMBERS_WORKSHEET
 SPREADSHEET_ID = config.GOOGLE_MEMBERS_SHEET_ID
 
 
+def _parse_expires_at(value):
+    if not value:
+        return 0
+    try:
+        return float(value)
+    except ValueError:
+        # Sel expires_at kadang rusak (mis. diformat ulang oleh Google Sheets
+        # jadi ada pemisah ribuan seperti "17,876,707,931,684,900", biasanya
+        # akibat sel sempat disentuh manual di UI Sheets). Anggap kedaluwarsa
+        # (0) supaya token di-refresh otomatis saat sync berikutnya, alih-alih
+        # meng-crash seluruh halaman untuk semua anggota.
+        return 0
+
+
 def _read_all():
     _, rows = sheets_client.read_rows(WORKSHEET, spreadsheet_id=SPREADSHEET_ID)
     members = {}
@@ -19,7 +33,7 @@ def _read_all():
             "display_name": display_name,
             "access_token": access_token,
             "refresh_token": refresh_token,
-            "expires_at": float(expires_at) if expires_at else 0,
+            "expires_at": _parse_expires_at(expires_at),
         }
     return members
 
