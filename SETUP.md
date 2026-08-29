@@ -39,7 +39,9 @@ Panduan instalasi, konfigurasi, deploy, dan troubleshooting untuk **Pacer Group 
                         ▼
              ┌───────────────────────┐
              │     Google Sheets      │
-             │  • Raw_Pacer (data)    │
+             │  • Raw_Pacer (live)    │
+             │  • Raw_Pacer_History   │
+             │    (arsip permanen)    │
              │  • Members (token OAuth│
              │    anggota, terpisah)  │
              └───────────────────────┘
@@ -49,7 +51,9 @@ Panduan instalasi, konfigurasi, deploy, dan troubleshooting untuk **Pacer Group 
 
 1. Admin login ke dashboard menggunakan username/password.
 2. Anggota grup klik **"Hubungkan Anggota"** → diarahkan ke halaman otorisasi Pacer → setelah setuju, token OAuth (access & refresh token) disimpan ke Google Sheet **Members** (spreadsheet terpisah, privat).
-3. Proses sinkronisasi (`sync.py`) mengambil ringkasan aktivitas harian tiap anggota dari Pacer API menggunakan token tersimpan, lalu menggabungkannya (upsert per anggota + tanggal) ke Google Sheet **Raw_Pacer**.
+3. Proses sinkronisasi (`sync.py`) mengambil ringkasan aktivitas harian tiap anggota dari Pacer API menggunakan token tersimpan, lalu meng-upsert-nya (per anggota + tanggal) ke **dua** sheet:
+   - **Raw_Pacer_History** — arsip permanen, tidak pernah dipangkas. Ini yang menjamin histori tidak pernah hilang.
+   - **Raw_Pacer** — sheet "live" untuk dashboard, dipangkas otomatis ke `RAW_PACER_LIVE_RETENTION_DAYS` hari terakhir (default 30) supaya tetap ringkas — aman dipangkas karena datanya sudah diarsipkan ke History terlebih dulu.
 4. Sinkronisasi dapat dipicu oleh tiga sumber: **terjadwal** (APScheduler, 5x sehari), **manual** (tombol di dashboard), atau **cron eksternal** (endpoint khusus dengan token rahasia, untuk menjaga aplikasi tetap "bangun" di hosting free tier).
 
 ## Struktur Proyek
@@ -106,7 +110,9 @@ Salin `.env.example` menjadi `.env`, lalu isi seluruh variabel berikut:
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | * | Isi file JSON Service Account dalam satu baris (dipakai saat deploy) |
 | `GOOGLE_SERVICE_ACCOUNT_FILE` | * | Path ke file JSON Service Account (dipakai untuk dev lokal saja) |
 | `GOOGLE_SHEET_ID` | ✅ | ID atau URL spreadsheet data aktivitas |
-| `GOOGLE_SHEET_WORKSHEET` | ✅ | Nama tab, default `Raw_Pacer` |
+| `GOOGLE_SHEET_WORKSHEET` | ✅ | Nama tab "live" untuk dashboard, default `Raw_Pacer` |
+| `GOOGLE_SHEET_HISTORY_WORKSHEET` | opsional | Nama tab arsip permanen (upsert saja, tidak pernah dipangkas), default `Raw_Pacer_History`. Dibuat otomatis kalau belum ada |
+| `RAW_PACER_LIVE_RETENTION_DAYS` | opsional | Berapa hari terakhir yang disimpan di tab live (`Raw_Pacer`), default `30`. Data lebih tua tetap aman di `Raw_Pacer_History` |
 | `GOOGLE_MEMBERS_SHEET_ID` | ✅ | ID atau URL spreadsheet token anggota (terpisah, privat) |
 | `GOOGLE_MEMBERS_WORKSHEET` | ✅ | Nama tab, default `Members` |
 | `FLASK_SECRET_KEY` | ✅ | Random string panjang untuk signing session cookie |
@@ -196,3 +202,4 @@ Karena hosting free tier "tidur" setelah idle, jadwal sync internal (APScheduler
 | Session terus logout meski baru dipakai | Periksa nilai `SESSION_TIMEOUT_MINUTES`, atau pastikan client (browser) mengizinkan cookie |
 | Jadwal sync tidak jalan otomatis | Kemungkinan aplikasi sedang "tidur" (free tier) — gunakan cron eksternal sebagai pemicu tambahan |
 | Anggota daftar Pacer via **Sign in with Apple + Hide My Email**, macet di halaman "Authorize" (khususnya Safari) | Ini terjadi di halaman `developer.mypacer.com`, di luar kendali aplikasi ini. Workaround: matikan "Prevent Cross-Site Tracking" di Safari untuk proses connect ini, coba browser lain, atau ubah ke share email asli lewat Settings → Apple ID → Sign-In & Security → Sign in with Apple. Jika berhasil connect, aplikasi ini sudah menangani `display_name` kosong dengan fallback ke `user_id` agar data anggota tidak tertukar di Google Sheets. |
+| Sheet `Raw_Pacer` cuma berisi beberapa hari terakhir, histori lama hilang | Sejak fitur arsip diaktifkan, `Raw_Pacer` memang sengaja dipangkas ke `RAW_PACER_LIVE_RETENTION_DAYS` hari terakhir — cek `Raw_Pacer_History` untuk histori lengkapnya. Kalau `Raw_Pacer_History` juga ikut kosong/terpotong, kemungkinan sheet-nya sempat ter-*clear* manual (Sheets UI) atau `GOOGLE_SHEET_ID`/nama tab pernah diganti di environment variables — bukan bug di logika upsert, karena logikanya selalu menggabungkan data lama + baru, tidak pernah menimpa begitu saja. |

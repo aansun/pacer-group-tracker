@@ -16,6 +16,17 @@ GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "credenti
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 GOOGLE_SHEET_WORKSHEET = os.getenv("GOOGLE_SHEET_WORKSHEET", "Raw_Pacer")
 
+# Arsip permanen: setiap sync di-upsert ke sini juga, TIDAK PERNAH dipangkas —
+# ini yang menjamin histori tidak pernah hilang meski sheet "live" di atas
+# dibatasi umurnya (lihat RAW_PACER_LIVE_RETENTION_DAYS).
+GOOGLE_SHEET_HISTORY_WORKSHEET = os.getenv("GOOGLE_SHEET_HISTORY_WORKSHEET", "Raw_Pacer_History")
+
+# Berapa hari terakhir yang disimpan di sheet "live" (GOOGLE_SHEET_WORKSHEET) untuk
+# dashboard. Baris yang lebih tua dari ini dipangkas dari sheet live SETELAH aman
+# ter-upsert ke GOOGLE_SHEET_HISTORY_WORKSHEET, supaya sheet live tetap ringkas dan
+# tidak terus membesar tanpa batas (tiap sync clear+tulis ulang seluruh sheet live).
+RAW_PACER_LIVE_RETENTION_DAYS = int(os.getenv("RAW_PACER_LIVE_RETENTION_DAYS", "30"))
+
 # Spreadsheet TERPISAH khusus token anggota (private, hanya di-share ke service account + admin)
 GOOGLE_MEMBERS_SHEET_ID = os.getenv("GOOGLE_MEMBERS_SHEET_ID")
 GOOGLE_MEMBERS_WORKSHEET = os.getenv("GOOGLE_MEMBERS_WORKSHEET", "Members")

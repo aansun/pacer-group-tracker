@@ -7,6 +7,7 @@ from services.pacer_client import PacerClient, refresh_access_token
 
 HEADER = ["Nama", "Tanggal", "Langkah", "Jarak (m)", "Kalori", "Waktu Aktif (s)", "User ID"]
 FETCH_DAYS_BACK = 2  # cukup untuk menangkap update hari ini + koreksi keterlambatan sync sebelumnya
+LIVE_RETENTION_DAYS = config.RAW_PACER_LIVE_RETENTION_DAYS
 
 
 def _ensure_fresh_token(user_id, member):
@@ -79,19 +80,54 @@ def _merge(existing_rows, new_rows):
     return sorted(merged.values(), key=lambda r: (r[0], r[1]))
 
 
-def run_sync():
-    """Ambil data terbaru dari Pacer (beberapa hari terakhir) dan gabungkan
-    (upsert per anggota+tanggal) ke histori yang sudah ada di Google Sheets."""
-    _, existing_rows = sheets_client.read_rows(config.GOOGLE_SHEET_WORKSHEET)
-    new_rows, failed_members = _fetch_recent_rows(FETCH_DAYS_BACK)
-    merged_rows = _merge(existing_rows, new_rows)
+def _prune_old_rows(rows, retention_days):
+    """Buang baris yang tanggalnya lebih tua dari `retention_days` hari dari sekarang.
 
-    sheets_client.write_rows(config.GOOGLE_SHEET_WORKSHEET, HEADER, merged_rows)
-    print(f"Data tersinkron ke Google Sheets ({len(merged_rows)} baris total, {len(new_rows)} baris diperbarui)")
+    Dipakai HANYA untuk sheet "live" (dashboard). Baris yang dibuang di sini tidak
+    hilang — sudah diupsert ke GOOGLE_SHEET_HISTORY_WORKSHEET terlebih dulu di
+    run_sync() sebelum fungsi ini dipanggil.
+    """
+    cutoff = (datetime.date.today() - datetime.timedelta(days=retention_days)).isoformat()
+    return [row for row in rows if len(row) > 1 and row[1] and row[1] >= cutoff]
+
+
+def run_sync():
+    """Ambil data terbaru dari Pacer (beberapa hari terakhir), lalu simpan ke dua sheet:
+
+    - GOOGLE_SHEET_HISTORY_WORKSHEET (Raw_Pacer_History): arsip permanen, di-upsert
+      per anggota+tanggal, TIDAK PERNAH dipangkas — ini yang menjamin histori tidak
+      pernah hilang.
+    - GOOGLE_SHEET_WORKSHEET (Raw_Pacer): sheet "live" untuk dashboard, di-upsert lalu
+      dipangkas ke LIVE_RETENTION_DAYS hari terakhir supaya tetap ringkas dan tidak
+      membesar tanpa batas (tiap sync clear + tulis ulang seluruh sheet ini).
+
+    Kegagalan per-anggota (mis. refresh_token invalid) di-catch di
+    _fetch_recent_rows dan tidak menggagalkan sync anggota lain; daftarnya
+    dikembalikan lewat `failed_members` supaya bisa ditampilkan ke admin.
+    """
+    new_rows, failed_members = _fetch_recent_rows(FETCH_DAYS_BACK)
+    _, existing_live_rows = sheets_client.read_rows(config.GOOGLE_SHEET_WORKSHEET)
+
+    # 1. Arsipkan ke History dulu. Baris live yang sudah ada ikut disertakan supaya
+    #    data yang sekarang masih ada di Raw_Pacer tidak hilang saat fitur ini
+    #    pertama kali aktif.
+    _, history_rows = sheets_client.read_rows(config.GOOGLE_SHEET_HISTORY_WORKSHEET)
+    merged_history = _merge(_merge(history_rows, existing_live_rows), new_rows)
+    sheets_client.write_rows(config.GOOGLE_SHEET_HISTORY_WORKSHEET, HEADER, merged_history)
+
+    # 2. Upsert + pangkas sheet live untuk dashboard.
+    merged_live = _merge(existing_live_rows, new_rows)
+    pruned_live = _prune_old_rows(merged_live, LIVE_RETENTION_DAYS)
+    sheets_client.write_rows(config.GOOGLE_SHEET_WORKSHEET, HEADER, pruned_live)
+
+    print(
+        f"Data tersinkron: History {len(merged_history)} baris total, "
+        f"Raw_Pacer (live) {len(pruned_live)} baris, {len(new_rows)} baris diperbarui"
+    )
     if failed_members:
         print(f"Gagal sync untuk {len(failed_members)} anggota: {failed_members}")
 
-    return new_rows, merged_rows, failed_members
+    return new_rows, pruned_live, failed_members
 
 
 if __name__ == "__main__":
