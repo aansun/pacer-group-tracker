@@ -80,6 +80,16 @@ def _merge(existing_rows, new_rows):
     return sorted(merged.values(), key=lambda r: (r[0], r[1]))
 
 
+def _finalized_rows(rows):
+    """Baris yang tanggalnya H-1 (kemarin) atau lebih lama — dianggap "final" dan
+    layak diarsipkan. Data hari ini (H) sengaja TIDAK diarsipkan dulu karena masih
+    bisa berubah sepanjang hari (sync jalan beberapa kali sehari); begitu hari
+    berganti, data H-1 otomatis ikut diarsipkan di sync berikutnya.
+    """
+    today = datetime.date.today().isoformat()
+    return [row for row in rows if len(row) > 1 and row[1] and row[1] < today]
+
+
 def _prune_old_rows(rows, retention_days):
     """Buang baris yang tanggalnya lebih tua dari `retention_days` hari dari sekarang.
 
@@ -96,10 +106,12 @@ def run_sync():
 
     - GOOGLE_SHEET_HISTORY_WORKSHEET (Raw_Pacer_History): arsip permanen, di-upsert
       per anggota+tanggal, TIDAK PERNAH dipangkas — ini yang menjamin histori tidak
-      pernah hilang.
+      pernah hilang. Hanya diisi baris H-1 ke belakang (lihat _finalized_rows).
     - GOOGLE_SHEET_WORKSHEET (Raw_Pacer): sheet "live" untuk dashboard, di-upsert lalu
       dipangkas ke LIVE_RETENTION_DAYS hari terakhir supaya tetap ringkas dan tidak
-      membesar tanpa batas (tiap sync clear + tulis ulang seluruh sheet ini).
+      membesar tanpa batas (tiap sync clear + tulis ulang seluruh sheet ini). Sheet
+      ini tetap menyimpan data hari ini (H) karena itu satu-satunya tempat data H
+      terlihat sebelum diarsipkan besok.
 
     Kegagalan per-anggota (mis. refresh_token invalid) di-catch di
     _fetch_recent_rows dan tidak menggagalkan sync anggota lain; daftarnya
@@ -108,11 +120,13 @@ def run_sync():
     new_rows, failed_members = _fetch_recent_rows(FETCH_DAYS_BACK)
     _, existing_live_rows = sheets_client.read_rows(config.GOOGLE_SHEET_WORKSHEET)
 
-    # 1. Arsipkan ke History dulu. Baris live yang sudah ada ikut disertakan supaya
-    #    data yang sekarang masih ada di Raw_Pacer tidak hilang saat fitur ini
+    # 1. Arsipkan ke History dulu — hanya baris H-1 ke belakang (data hari ini belum
+    #    "final", jangan diarsipkan dulu). Baris live yang sudah ada ikut disertakan
+    #    supaya data lama yang masih di Raw_Pacer tidak hilang saat fitur ini
     #    pertama kali aktif.
     _, history_rows = sheets_client.read_rows(config.GOOGLE_SHEET_HISTORY_WORKSHEET)
-    merged_history = _merge(_merge(history_rows, existing_live_rows), new_rows)
+    candidate_history = _merge(_merge(history_rows, existing_live_rows), new_rows)
+    merged_history = _finalized_rows(candidate_history)
     sheets_client.write_rows(config.GOOGLE_SHEET_HISTORY_WORKSHEET, HEADER, merged_history)
 
     # 2. Upsert + pangkas sheet live untuk dashboard.

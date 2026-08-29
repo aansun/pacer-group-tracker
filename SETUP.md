@@ -52,7 +52,7 @@ Panduan instalasi, konfigurasi, deploy, dan troubleshooting untuk **Pacer Group 
 1. Admin login ke dashboard menggunakan username/password.
 2. Anggota grup klik **"Hubungkan Anggota"** → diarahkan ke halaman otorisasi Pacer → setelah setuju, token OAuth (access & refresh token) disimpan ke Google Sheet **Members** (spreadsheet terpisah, privat).
 3. Proses sinkronisasi (`sync.py`) mengambil ringkasan aktivitas harian tiap anggota dari Pacer API menggunakan token tersimpan, lalu meng-upsert-nya (per anggota + tanggal) ke **dua** sheet:
-   - **Raw_Pacer_History** — arsip permanen, tidak pernah dipangkas. Ini yang menjamin histori tidak pernah hilang.
+   - **Raw_Pacer_History** — arsip permanen, tidak pernah dipangkas. Hanya diisi data H-1 (kemarin) ke belakang — data hari ini (H) belum dianggap final karena masih bisa berubah sepanjang hari, baru diarsipkan besok. Ini yang menjamin histori tidak pernah hilang.
    - **Raw_Pacer** — sheet "live" untuk dashboard, dipangkas otomatis ke `RAW_PACER_LIVE_RETENTION_DAYS` hari terakhir (default 30) supaya tetap ringkas — aman dipangkas karena datanya sudah diarsipkan ke History terlebih dulu.
 4. Sinkronisasi dapat dipicu oleh tiga sumber: **terjadwal** (APScheduler, 5x sehari), **manual** (tombol di dashboard), atau **cron eksternal** (endpoint khusus dengan token rahasia, untuk menjaga aplikasi tetap "bangun" di hosting free tier).
 
