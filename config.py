@@ -29,6 +29,12 @@ GOOGLE_SHEET_WORKSHEET = os.getenv("GOOGLE_SHEET_WORKSHEET", "Raw_Pacer")
 # ada permanen di Postgres) supaya tetap ringan & tidak kena rate limit Sheets API.
 SHEETS_EXPORT_RETENTION_DAYS = int(os.getenv("SHEETS_EXPORT_RETENTION_DAYS", "90"))
 
+# Export tambahan: matriks wide/pivot steps-only (tanggal x anggota) mengikuti
+# format sheet Data_Pacer yang sudah ada, dipakai sheet turunan (Score_Pacer,
+# Mart_Raw_Pacer, dst). Histori penuh (tidak dibatasi retensi) karena barisnya
+# cuma bertambah per tanggal, bukan per anggota+tanggal.
+DATA_PACER_WORKSHEET = os.getenv("DATA_PACER_WORKSHEET", "Data_Pacer")
+
 # GOOGLE_SHEET_HISTORY_WORKSHEET / GOOGLE_MEMBERS_* di bawah ini legacy — HANYA
 # dipakai scripts/migrate_from_sheets.py (migrasi satu kali dari Sheets lama).
 GOOGLE_SHEET_HISTORY_WORKSHEET = os.getenv("GOOGLE_SHEET_HISTORY_WORKSHEET", "Raw_Pacer_History")

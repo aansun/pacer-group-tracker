@@ -93,10 +93,12 @@ def run_sync():
     dipangkas — beda dari skema Google Sheets sebelumnya yang perlu sheet
     "live" + arsip terpisah karena keterbatasan ukuran/API sheet.
 
-    Setelah Postgres ter-update, coba export cerminan N hari terakhir ke
-    Google Sheets yang sudah ada (lihat services/sheets_export.py) supaya
-    tetap enak dilihat/dipakai pivot table. Ini best-effort — kalau export
-    gagal (quota, jaringan, dsb), sync ke Postgres TETAP dianggap berhasil.
+    Setelah Postgres ter-update, coba export ke Google Sheets (lihat
+    services/sheets_export.py) — dua bentuk: cerminan N hari terakhir ke
+    Raw_Pacer (format lama), dan matriks steps-only wide/pivot ke Data_Pacer
+    (dipakai sheet turunan Score_Pacer/Mart_Raw_Pacer). Keduanya best-effort —
+    kalau export gagal (quota, jaringan, dsb), sync ke Postgres TETAP
+    dianggap berhasil.
     """
     new_rows, failed_members = _fetch_recent_rows(FETCH_DAYS_BACK)
     _upsert_activities(new_rows)
@@ -117,7 +119,15 @@ def run_sync():
         if exported is not None:
             print(f"Export ke Google Sheets: {exported} baris ({config.SHEETS_EXPORT_RETENTION_DAYS} hari terakhir)")
     except Exception as exc:
-        print(f"PERINGATAN: export ke Google Sheets gagal, Postgres tetap aman: {exc}")
+        print(f"PERINGATAN: export ke Google Sheets (Raw_Pacer) gagal, Postgres tetap aman: {exc}")
+
+    try:
+        wide_result = sheets_export.export_wide_steps_matrix()
+        if wide_result is not None:
+            n_dates, n_members = wide_result
+            print(f"Export matriks steps ke {config.DATA_PACER_WORKSHEET}: {n_dates} tanggal x {n_members} anggota")
+    except Exception as exc:
+        print(f"PERINGATAN: export ke {config.DATA_PACER_WORKSHEET} gagal, Postgres tetap aman: {exc}")
 
     return len(new_rows), total_count, failed_members
 
