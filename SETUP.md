@@ -111,7 +111,7 @@ Salin `.env.example` menjadi `.env`, lalu isi seluruh variabel berikut:
 | `PACER_AUTH_BASE_URL` | ✅ | Default: `http://developer.mypacer.com` |
 | `PACER_API_BASE_URL` | ✅ | Default: `http://openapi.mypacer.com` |
 | `PACER_REDIRECT_URI` | ✅ | URL callback OAuth, harus sama persis dengan yang didaftarkan di Pacer Developer Console |
-| `DATABASE_URL` | ✅ | Connection string PostgreSQL, format `postgresql://user:password@host:5432/dbname`. Tabel dibuat otomatis saat aplikasi start |
+| `DATABASE_URL` | ✅ | Connection string PostgreSQL. Untuk Supabase, pakai **Transaction pooler** (port `6543`, host `aws-0-<region>.pooler.supabase.com`) — bukan direct connection (port `5432`), supaya tidak cepat kehabisan slot koneksi. Tabel dibuat otomatis di schema `itd_pacer_tracker` saat aplikasi start (lihat [Isolasi Schema](#keamanan)) — aman dipakai di database yang di-share dengan aplikasi lain |
 | `FLASK_SECRET_KEY` | ✅ | Random string panjang untuk signing session cookie |
 | `LOGIN_USERNAME` / `LOGIN_PASSWORD` | ✅ | Kredensial login dashboard — **wajib diganti dari default** |
 | `CRON_SYNC_TOKEN` | opsional | Token rahasia untuk endpoint `/sync/cron`. Kosongkan untuk menonaktifkan endpoint tersebut |
@@ -205,6 +205,7 @@ Karena hosting free tier "tidur" setelah idle, jadwal sync internal (APScheduler
 - **Token cron terpisah** — endpoint `/sync/cron` menggunakan mekanisme autentikasi terpisah (token rahasia, dibandingkan dengan `secrets.compare_digest` untuk mencegah *timing attack*), sehingga tidak perlu membuka akses `/sync` (yang butuh login) ke publik.
 - **Perbandingan kredensial aman** — pengecekan username/password login menggunakan `secrets.compare_digest`.
 - **Token OAuth anggota** disimpan di tabel `members` di database yang sama — pastikan `DATABASE_URL` hanya diberikan ke pihak yang berwenang (admin), sama seperti perlakuan kredensial sensitif lain.
+- **Isolasi schema (`itd_pacer_tracker`)** — kalau `DATABASE_URL` menunjuk ke database yang di-*share* dengan aplikasi lain (mis. satu project Supabase dipakai beberapa app), seluruh tabel project ini hidup di schema `itd_pacer_tracker`, bukan `public`. Setiap koneksi di-set `search_path` khusus ke schema ini (lihat `services/db.py`), jadi query di app ini tidak mungkin salah baca/tulis ke tabel milik aplikasi lain walau kebetulan nama tabelnya sama, dan `init_schema()` (`CREATE ... IF NOT EXISTS`) tidak pernah menyentuh objek di schema lain.
 
 ## Troubleshooting
 

@@ -2,6 +2,15 @@
 
 Semua modul lain (member_store, sync) memakai get_cursor() dari sini, tidak
 pernah membuka koneksi psycopg2 sendiri-sendiri.
+
+PENTING — isolasi schema: database ini bisa jadi dipakai BARENG aplikasi lain
+(mis. Supabase project yang sama dipakai beberapa app). Supaya tidak pernah
+bentrok/merusak tabel milik aplikasi lain, SEMUA tabel project ini hidup di
+schema khusus `itd_pacer_tracker` (bukan `public`), dan setiap koneksi di pool
+di-set `search_path` HANYA ke schema ini — jadi query tanpa prefix schema
+(mis. `SELECT * FROM members`) otomatis dan selalu mengarah ke tabel kita
+sendiri, tidak mungkin salah nyasar ke tabel app lain di `public` atau schema
+lain, walau namanya kebetulan sama.
 """
 import contextlib
 
@@ -13,7 +22,11 @@ import config
 
 _pool = None
 
-SCHEMA_SQL = """
+SCHEMA_NAME = "itd_pacer_tracker"
+
+SCHEMA_SQL = f"""
+CREATE SCHEMA IF NOT EXISTS {SCHEMA_NAME};
+
 CREATE TABLE IF NOT EXISTS members (
     user_id       TEXT PRIMARY KEY,
     display_name  TEXT NOT NULL,
@@ -57,7 +70,13 @@ def _get_pool():
                 "DATABASE_URL belum diset. Isi environment variable DATABASE_URL "
                 "dengan connection string PostgreSQL (lihat SETUP.md)."
             )
-        _pool = psycopg2.pool.SimpleConnectionPool(1, 5, dsn=config.DATABASE_URL)
+        # search_path di-set per koneksi (bukan per query) supaya SEMUA query di
+        # app ini otomatis terisolasi ke schema kita sendiri — lihat catatan di
+        # atas. `public` sengaja TIDAK disertakan supaya tidak ada fallback yang
+        # bisa nyasar ke tabel aplikasi lain.
+        _pool = psycopg2.pool.SimpleConnectionPool(
+            1, 5, dsn=config.DATABASE_URL, options=f"-c search_path={SCHEMA_NAME}"
+        )
     return _pool
 
 

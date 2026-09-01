@@ -1,5 +1,6 @@
 .env
 ITDpacertracker.env
+supabsedb.md
 venv/
 __pycache__/
 *.pyc
