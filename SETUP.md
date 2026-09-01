@@ -9,10 +9,10 @@ Panduan instalasi, konfigurasi, deploy, dan troubleshooting untuk **Pacer Group 
 - [Persiapan](#persiapan)
 - [Konfigurasi Environment Variables](#konfigurasi-environment-variables)
 - [Menjalankan Secara Lokal](#menjalankan-secara-lokal)
+- [Migrasi dari Google Sheets](#migrasi-dari-google-sheets)
 - [Deploy ke Render.com](#deploy-ke-rendercom)
 - [Sinkronisasi Otomatis via Cron Eksternal](#sinkronisasi-otomatis-via-cron-eksternal)
 - [Keamanan](#keamanan)
-- [Keterbatasan Free Tier](#keterbatasan-free-tier)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -38,23 +38,24 @@ Panduan instalasi, konfigurasi, deploy, dan troubleshooting untuk **Pacer Group 
                         │
                         ▼
              ┌───────────────────────┐
-             │     Google Sheets      │
-             │  • Raw_Pacer (live)    │
-             │  • Raw_Pacer_History   │
-             │    (arsip permanen)    │
-             │  • Members (token OAuth│
-             │    anggota, terpisah)  │
+             │      PostgreSQL        │
+             │  • members             │
+             │  • activities          │
+             │  • sync_runs           │
              └───────────────────────┘
 ```
 
 **Alur singkat:**
 
 1. Admin login ke dashboard menggunakan username/password.
-2. Anggota grup klik **"Hubungkan Anggota"** → diarahkan ke halaman otorisasi Pacer → setelah setuju, token OAuth (access & refresh token) disimpan ke Google Sheet **Members** (spreadsheet terpisah, privat).
-3. Proses sinkronisasi (`sync.py`) mengambil ringkasan aktivitas harian tiap anggota dari Pacer API menggunakan token tersimpan, lalu meng-upsert-nya (per anggota + tanggal) ke **dua** sheet:
-   - **Raw_Pacer_History** — arsip permanen, tidak pernah dipangkas. Hanya diisi data H-1 (kemarin) ke belakang — data hari ini (H) belum dianggap final karena masih bisa berubah sepanjang hari, baru diarsipkan besok. Ini yang menjamin histori tidak pernah hilang.
-   - **Raw_Pacer** — sheet "live" untuk dashboard, dipangkas otomatis ke `RAW_PACER_LIVE_RETENTION_DAYS` hari terakhir (default 30) supaya tetap ringkas — aman dipangkas karena datanya sudah diarsipkan ke History terlebih dulu.
-4. Sinkronisasi dapat dipicu oleh tiga sumber: **terjadwal** (APScheduler, 5x sehari), **manual** (tombol di dashboard), atau **cron eksternal** (endpoint khusus dengan token rahasia, untuk menjaga aplikasi tetap "bangun" di hosting free tier).
+2. Anggota grup klik **"Hubungkan Anggota"** → diarahkan ke halaman otorisasi Pacer → setelah setuju, token OAuth (access & refresh token) disimpan ke tabel **`members`**.
+3. Proses sinkronisasi (`sync.py`) mengambil ringkasan aktivitas harian tiap anggota dari Pacer API menggunakan token tersimpan, lalu meng-**upsert**-nya (per anggota + tanggal, `ON CONFLICT (user_id, activity_date)`) ke tabel **`activities`**. Histori tersimpan permanen tanpa batas — tidak ada lagi konsep sheet "live" vs "arsip" seperti di skema Google Sheets sebelumnya, karena Postgres tidak perlu clear+tulis-ulang seluruh tabel setiap sync.
+4. Kegagalan per-anggota (mis. `refresh_token` yang sudah dicabut di sisi Pacer) di-*catch* dan dilewati — tidak menggagalkan sync anggota lain. Daftarnya ditampilkan di dashboard.
+5. Sinkronisasi dapat dipicu oleh tiga sumber: **terjadwal** (APScheduler, 5x sehari), **manual** (tombol di dashboard), atau **cron eksternal** (endpoint khusus dengan token rahasia, untuk menjaga aplikasi tetap "bangun" di hosting free tier).
+
+### Kenapa pindah dari Google Sheets ke Postgres
+
+Google Sheets punya keterbatasan skala untuk peran ini: setiap sync harus *clear + tulis ulang seluruh sheet* (tidak ada operasi upsert baris tunggal via API), kena rate limit ("Read/Write requests per minute"), dan sel yang diformat ulang oleh Sheets UI bisa merusak data (mis. `expires_at` yang di-*reformat* jadi angka dengan pemisah ribuan). Postgres menghilangkan semua ini: upsert per baris (`ON CONFLICT DO UPDATE`), tidak ada batas praktis jumlah baris, tipe data (angka, tanggal) terjaga oleh skema, dan tidak perlu lagi logika tambahan (merge/prune/arsip) yang sebelumnya dibutuhkan hanya untuk menyiasati keterbatasan Sheets.
 
 ## Struktur Proyek
 
@@ -62,15 +63,18 @@ Panduan instalasi, konfigurasi, deploy, dan troubleshooting untuk **Pacer Group 
 pacer-group-tracker/
 ├── app.py                     # Entry point Flask: routing, login gate, session timeout, scheduler
 ├── config.py                  # Pemuatan seluruh environment variables
-├── sync.py                    # Logika inti sinkronisasi: fetch Pacer API → upsert Google Sheets
+├── sync.py                    # Logika inti sinkronisasi: fetch Pacer API → upsert Postgres
 ├── requirements.txt           # Dependensi Python
 ├── Procfile                   # Perintah start untuk Render (gunicorn, 1 worker)
 ├── .env.example                # Template environment variables
 ├── services/
 │   ├── pacer_client.py        # OAuth flow & wrapper pemanggilan Pacer API
-│   ├── member_store.py        # CRUD data anggota & token, disimpan di sheet "Members"
-│   ├── sheets_client.py       # Helper generik baca/tulis Google Sheets (via gspread)
+│   ├── db.py                  # Connection pool Postgres + init schema (members, activities, sync_runs)
+│   ├── member_store.py        # CRUD data anggota & token, tabel "members"
+│   ├── sheets_client.py       # Legacy — helper baca/tulis Google Sheets, dipakai HANYA oleh scripts/migrate_from_sheets.py
 │   └── sync_state.py          # Status sync terakhir (in-memory, untuk tampilan dashboard)
+├── scripts/
+│   └── migrate_from_sheets.py # Migrasi satu kali: Google Sheets -> Postgres (read-only ke Sheets)
 └── templates/
     ├── login.html              # Halaman login
     └── index.html              # Dashboard utama
@@ -81,12 +85,9 @@ pacer-group-tracker/
 ### Prasyarat
 
 - Python 3.11+ (disarankan mengikuti versi yang dipakai di `render_env_values.txt` / `PYTHON_VERSION`)
-- Akun **Google Cloud** dengan Service Account yang punya akses ke Google Sheets API
+- Database **PostgreSQL** (Render Postgres, Supabase, Neon, Railway, atau self-hosted — apa saja yang expose connection string `postgresql://...`)
 - Kredensial **Pacer Developer** (`client_id` & `client_secret`) dari [developer.mypacer.com](https://developer.mypacer.com)
-- Dua Google Spreadsheet terpisah:
-  - Satu untuk data aktivitas (`Raw_Pacer`)
-  - Satu untuk token anggota (`Members`) — **wajib dipisah** karena berisi data sensitif (refresh token OAuth)
-- Kedua spreadsheet di atas sudah di-*share* ke email Service Account dengan akses **Editor**
+- *(Hanya kalau masih migrasi dari versi lama)* Akses ke Google Sheets lama — lihat [Migrasi dari Google Sheets](#migrasi-dari-google-sheets)
 
 ### Instalasi Dependensi
 
@@ -107,20 +108,12 @@ Salin `.env.example` menjadi `.env`, lalu isi seluruh variabel berikut:
 | `PACER_AUTH_BASE_URL` | ✅ | Default: `http://developer.mypacer.com` |
 | `PACER_API_BASE_URL` | ✅ | Default: `http://openapi.mypacer.com` |
 | `PACER_REDIRECT_URI` | ✅ | URL callback OAuth, harus sama persis dengan yang didaftarkan di Pacer Developer Console |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | * | Isi file JSON Service Account dalam satu baris (dipakai saat deploy) |
-| `GOOGLE_SERVICE_ACCOUNT_FILE` | * | Path ke file JSON Service Account (dipakai untuk dev lokal saja) |
-| `GOOGLE_SHEET_ID` | ✅ | ID atau URL spreadsheet data aktivitas |
-| `GOOGLE_SHEET_WORKSHEET` | ✅ | Nama tab "live" untuk dashboard, default `Raw_Pacer` |
-| `GOOGLE_SHEET_HISTORY_WORKSHEET` | opsional | Nama tab arsip permanen (upsert saja, tidak pernah dipangkas), default `Raw_Pacer_History`. Dibuat otomatis kalau belum ada |
-| `RAW_PACER_LIVE_RETENTION_DAYS` | opsional | Berapa hari terakhir yang disimpan di tab live (`Raw_Pacer`), default `30`. Data lebih tua tetap aman di `Raw_Pacer_History` |
-| `GOOGLE_MEMBERS_SHEET_ID` | ✅ | ID atau URL spreadsheet token anggota (terpisah, privat) |
-| `GOOGLE_MEMBERS_WORKSHEET` | ✅ | Nama tab, default `Members` |
+| `DATABASE_URL` | ✅ | Connection string PostgreSQL, format `postgresql://user:password@host:5432/dbname`. Tabel dibuat otomatis saat aplikasi start |
 | `FLASK_SECRET_KEY` | ✅ | Random string panjang untuk signing session cookie |
 | `LOGIN_USERNAME` / `LOGIN_PASSWORD` | ✅ | Kredensial login dashboard — **wajib diganti dari default** |
 | `CRON_SYNC_TOKEN` | opsional | Token rahasia untuk endpoint `/sync/cron`. Kosongkan untuk menonaktifkan endpoint tersebut |
 | `SESSION_TIMEOUT_MINUTES` | opsional | Lama idle sebelum auto-logout, default `60` menit |
-
-`*` Isi salah satu dari `GOOGLE_SERVICE_ACCOUNT_JSON` atau `GOOGLE_SERVICE_ACCOUNT_FILE`.
+| `GOOGLE_SERVICE_ACCOUNT_JSON` / `GOOGLE_SHEET_ID` / dst | legacy | HANYA dipakai `scripts/migrate_from_sheets.py`. Boleh dihapus dari environment setelah migrasi selesai |
 
 ## Menjalankan Secara Lokal
 
@@ -132,22 +125,42 @@ Buka `http://localhost:5000`, lalu login menggunakan `LOGIN_USERNAME` / `LOGIN_P
 
 > **Catatan:** untuk testing lokal, pastikan `PACER_REDIRECT_URI` diarahkan ke `http://localhost:5000/pacer/callback` dan URI tersebut juga terdaftar di Pacer Developer Console, jika ingin menguji alur *connect* anggota secara end-to-end.
 
-Tab **Members** dan **Raw_Pacer** akan otomatis dibuat di spreadsheet terkait jika belum ada.
+Tabel `members`, `activities`, dan `sync_runs` dibuat otomatis (`CREATE TABLE IF NOT EXISTS`) saat aplikasi start — tidak perlu migrasi manual untuk instalasi baru.
+
+## Migrasi dari Google Sheets
+
+Untuk instalasi yang sebelumnya memakai versi Google Sheets: jalankan script migrasi satu kali ini SEBELUM deploy versi Postgres ke production. Script ini **read-only** terhadap Google Sheets (tidak pernah menulis/menghapus apa pun di sana) dan **idempoten** (aman dijalankan berkali-kali kalau terputus di tengah jalan).
+
+```bash
+# Pastikan .env masih berisi kredensial Google Sheets LAMA (GOOGLE_SERVICE_ACCOUNT_*,
+# GOOGLE_SHEET_ID, dst) + DATABASE_URL yang BARU
+source venv/bin/activate
+python -m scripts.migrate_from_sheets
+```
+
+Yang dilakukan script ini:
+
+1. Membaca seluruh anggota dari sheet **Members** → upsert ke tabel `members` (token OAuth ikut terbawa, anggota yang sudah terhubung tidak perlu connect ulang).
+2. Membaca **Raw_Pacer** + **Raw_Pacer_History**, digabung & dedup (kalau ada baris yang sama di keduanya, versi dari Raw_Pacer/live yang dipakai karena lebih baru), lalu upsert ke tabel `activities`.
+3. Baris lama dari sebelum kolom "User ID" ditambahkan (tidak bisa dipetakan ke anggota dengan aman) dan baris dengan `user_id` yang sudah tidak ada di Members akan **dilewati dengan peringatan** — dicetak jelas di output, bukan hilang diam-diam.
+
+Setelah migrasi, verifikasi jumlah anggota & baris aktivitas di output script sesuai ekspektasi, baru redeploy aplikasi dengan `DATABASE_URL` di-set sebagai penyimpanan utama. Data di Google Sheets tidak disentuh sama sekali — aman dijadikan cadangan sampai yakin migrasi berhasil.
 
 ## Deploy ke Render.com
 
 1. Push repository ini ke GitHub.
-2. Di [Render Dashboard](https://dashboard.render.com/) → **New +** → **Web Service** → hubungkan ke repository.
-3. Environment: **Python 3**. Build command: `pip install -r requirements.txt`. Start command otomatis terbaca dari `Procfile`:
+2. Kalau belum ada: buat **Render Postgres** (New + → PostgreSQL) dan salin **Internal Database URL**-nya.
+3. Di [Render Dashboard](https://dashboard.render.com/) → **New +** → **Web Service** → hubungkan ke repository.
+4. Environment: **Python 3**. Build command: `pip install -r requirements.txt`. Start command otomatis terbaca dari `Procfile`:
    ```
    web: gunicorn -w 1 --timeout 120 app:app
    ```
    > **Penting:** jangan ubah `-w 1`. Scheduler sinkronisasi otomatis harus berjalan di satu proses saja — jika lebih dari satu worker, jadwal sync akan terpicu berulang kali (duplikasi).
-4. Di tab **Environment**, tambahkan seluruh variabel dari `.env.example` (lihat tabel di atas).
-5. Deploy. Setelah mendapat URL publik (`https://xxx.onrender.com`):
+5. Di tab **Environment**, tambahkan seluruh variabel dari `.env.example` (lihat tabel di atas), termasuk `DATABASE_URL` dari langkah 2.
+6. Deploy. Setelah mendapat URL publik (`https://xxx.onrender.com`):
    - Update `PACER_REDIRECT_URI` di environment variables Render ke `https://xxx.onrender.com/pacer/callback`.
    - Daftarkan redirect URI yang sama persis di Pacer Developer Console.
-6. Bagikan URL aplikasi beserta kredensial login ke anggota grup agar mereka bisa login dan menghubungkan akun Pacer masing-masing.
+7. Bagikan URL aplikasi beserta kredensial login ke anggota grup agar mereka bisa login dan menghubungkan akun Pacer masing-masing.
 
 ## Sinkronisasi Otomatis via Cron Eksternal
 
@@ -173,33 +186,27 @@ Karena hosting free tier "tidur" setelah idle, jadwal sync internal (APScheduler
 
 | Status | Kondisi |
 |---|---|
-| `200` | Sukses, body: `{"ok": true, "updated_count": 12, "total_count": 340}` |
+| `200` | Sukses, body: `{"ok": true, "updated_count": 12, "total_count": 340, "failed_members": [...]}` |
 | `401` | Token tidak valid |
 | `503` | `CRON_SYNC_TOKEN` belum diset di server (endpoint nonaktif secara default) |
-| `500` | Sync gagal (mis. error koneksi ke Pacer API/Google Sheets), body berisi pesan error |
+| `500` | Sync gagal (mis. error koneksi ke Pacer API/database), body berisi pesan error |
 
 ## Keamanan
 
 - **Login gate** — seluruh route (kecuali `/login` dan `/sync/cron`) memerlukan session aktif.
 - **Session timeout otomatis** — session berakhir setelah tidak ada aktivitas selama `SESSION_TIMEOUT_MINUTES` (default 60 menit), dihitung secara *sliding* (timer di-reset setiap kali ada request, bukan dari waktu login pertama).
 - **Token cron terpisah** — endpoint `/sync/cron` menggunakan mekanisme autentikasi terpisah (token rahasia, dibandingkan dengan `secrets.compare_digest` untuk mencegah *timing attack*), sehingga tidak perlu membuka akses `/sync` (yang butuh login) ke publik.
-- **Pemisahan spreadsheet data & token** — token OAuth anggota (sensitif) disimpan di spreadsheet terpisah dari data aktivitas, dengan akses dibatasi hanya untuk Service Account dan admin.
 - **Perbandingan kredensial aman** — pengecekan username/password login menggunakan `secrets.compare_digest`.
-
-## Keterbatasan Free Tier
-
-- **Cold start** — aplikasi "tidur" setelah ±15 menit tanpa traffic, dan butuh 10–30 detik untuk bangun saat ada request masuk. Ini bisa membuat jadwal sync internal terlewat jika aplikasi kebetulan sedang tidur. Solusi: gunakan endpoint `/sync/cron` yang didaftarkan ke cron eksternal (lihat bagian di atas) agar sync tetap terpicu sekaligus membangunkan aplikasi.
-- **Rate limit Google Sheets API** — 100 request per 100 detik per project. Untuk jumlah anggota dalam skala puluhan, penggunaan normal masih jauh di bawah limit tersebut.
-- **`sync_state`** disimpan in-memory — riwayat sync terakhir akan ter-reset setiap kali aplikasi restart/redeploy (hanya untuk keperluan tampilan, bukan sumber data utama).
+- **Token OAuth anggota** disimpan di tabel `members` di database yang sama — pastikan `DATABASE_URL` hanya diberikan ke pihak yang berwenang (admin), sama seperti perlakuan kredensial sensitif lain.
 
 ## Troubleshooting
 
 | Masalah | Kemungkinan Penyebab & Solusi |
 |---|---|
 | Redirect OAuth gagal / "invalid redirect_uri" | Pastikan `PACER_REDIRECT_URI` di environment variables sama persis dengan yang terdaftar di Pacer Developer Console |
-| Sync gagal dengan error terkait Google Sheets | Pastikan spreadsheet sudah di-*share* ke email Service Account dengan akses Editor |
+| Aplikasi gagal start, error `DATABASE_URL belum diset` | Set environment variable `DATABASE_URL` — lihat [Konfigurasi Environment Variables](#konfigurasi-environment-variables) |
 | Endpoint `/sync/cron` selalu 503 | `CRON_SYNC_TOKEN` belum diset di environment variables |
 | Session terus logout meski baru dipakai | Periksa nilai `SESSION_TIMEOUT_MINUTES`, atau pastikan client (browser) mengizinkan cookie |
 | Jadwal sync tidak jalan otomatis | Kemungkinan aplikasi sedang "tidur" (free tier) — gunakan cron eksternal sebagai pemicu tambahan |
-| Anggota daftar Pacer via **Sign in with Apple + Hide My Email**, macet di halaman "Authorize" (khususnya Safari) | Ini terjadi di halaman `developer.mypacer.com`, di luar kendali aplikasi ini. Workaround: matikan "Prevent Cross-Site Tracking" di Safari untuk proses connect ini, coba browser lain, atau ubah ke share email asli lewat Settings → Apple ID → Sign-In & Security → Sign in with Apple. Jika berhasil connect, aplikasi ini sudah menangani `display_name` kosong dengan fallback ke `user_id` agar data anggota tidak tertukar di Google Sheets. |
-| Sheet `Raw_Pacer` cuma berisi beberapa hari terakhir, histori lama hilang | Sejak fitur arsip diaktifkan, `Raw_Pacer` memang sengaja dipangkas ke `RAW_PACER_LIVE_RETENTION_DAYS` hari terakhir — cek `Raw_Pacer_History` untuk histori lengkapnya. Kalau `Raw_Pacer_History` juga ikut kosong/terpotong, kemungkinan sheet-nya sempat ter-*clear* manual (Sheets UI) atau `GOOGLE_SHEET_ID`/nama tab pernah diganti di environment variables — bukan bug di logika upsert, karena logikanya selalu menggabungkan data lama + baru, tidak pernah menimpa begitu saja. |
+| Anggota daftar Pacer via **Sign in with Apple + Hide My Email**, macet di halaman "Authorize" (khususnya Safari) | Ini terjadi di halaman `developer.mypacer.com`, di luar kendali aplikasi ini. Workaround: matikan "Prevent Cross-Site Tracking" di Safari untuk proses connect ini, coba browser lain, atau ubah ke share email asli lewat Settings → Apple ID → Sign-In & Security → Sign in with Apple. Jika berhasil connect, aplikasi ini sudah menangani `display_name` kosong dengan fallback ke `user_id` agar data anggota tidak tertukar. |
+| Setelah migrasi, sebagian baris aktivitas lama tidak muncul | Cek output `scripts/migrate_from_sheets.py` — baris lama tanpa kolom "User ID" atau dengan `user_id` yang tidak ada di tabel `members` sengaja dilewati (dicetak sebagai peringatan) karena tidak bisa dipetakan ke anggota dengan aman |

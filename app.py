@@ -9,13 +9,16 @@ from flask import Flask, render_template, redirect, url_for, flash, request, ses
 from flask_wtf import CSRFProtect
 
 import config
-from services import member_store, sync_state
+from services import db, member_store, sync_state
 from services.pacer_client import get_authorization_url, exchange_code_for_token, PacerClient
 from sync import run_sync
 
 app = Flask(__name__)
 app.secret_key = config.FLASK_SECRET_KEY
 app.permanent_session_lifetime = datetime.timedelta(minutes=config.SESSION_TIMEOUT_MINUTES)
+
+# Idempoten (CREATE TABLE IF NOT EXISTS) — aman dipanggil setiap kali proses start.
+db.init_schema()
 
 # Proteksi CSRF untuk seluruh form/POST berbasis session (login, sync manual).
 # /sync/cron dikecualikan karena memakai autentikasi token terpisah (bukan cookie session).
@@ -90,8 +93,8 @@ def logout():
 def scheduled_sync():
     print(f"[scheduler] menjalankan sync otomatis {datetime.datetime.now().isoformat()}")
     try:
-        updated, total, failed_members = run_sync()
-        sync_state.record("scheduled", len(updated), len(total), failed_members=failed_members)
+        updated_count, total_count, failed_members = run_sync()
+        sync_state.record("scheduled", updated_count, total_count, failed_members=failed_members)
     except Exception as exc:
         print(f"[scheduler] sync otomatis gagal: {exc}")
         sync_state.record("scheduled", 0, 0, error=str(exc))
@@ -162,10 +165,10 @@ def pacer_callback():
 @login_required
 def sync():
     try:
-        updated, total, failed_members = run_sync()
-        sync_state.record("manual", len(updated), len(total), failed_members=failed_members)
+        updated_count, total_count, failed_members = run_sync()
+        sync_state.record("manual", updated_count, total_count, failed_members=failed_members)
         flash(
-            f"Sync berhasil: {len(updated)} baris diperbarui, {len(total)} baris total di Google Sheets.",
+            f"Sync berhasil: {updated_count} baris diperbarui, {total_count} baris total di database.",
             "success",
         )
         if failed_members:
@@ -201,12 +204,12 @@ def sync_cron():
         return jsonify({"ok": False, "error": "token tidak valid"}), 401
 
     try:
-        updated, total, failed_members = run_sync()
-        sync_state.record("cron", len(updated), len(total), failed_members=failed_members)
+        updated_count, total_count, failed_members = run_sync()
+        sync_state.record("cron", updated_count, total_count, failed_members=failed_members)
         return jsonify({
             "ok": True,
-            "updated_count": len(updated),
-            "total_count": len(total),
+            "updated_count": updated_count,
+            "total_count": total_count,
             "failed_members": [name for name, _ in failed_members],
         })
     except Exception as exc:

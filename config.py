@@ -9,27 +9,23 @@ PACER_AUTH_BASE_URL = os.getenv("PACER_AUTH_BASE_URL", "https://developer.mypace
 PACER_API_BASE_URL = os.getenv("PACER_API_BASE_URL", "https://openapi.mypacer.com")
 PACER_REDIRECT_URI = os.getenv("PACER_REDIRECT_URI")
 
-# Isi salah satu: GOOGLE_SERVICE_ACCOUNT_JSON (isi file JSON dalam satu baris, dipakai di Render)
-# atau GOOGLE_SERVICE_ACCOUNT_FILE (path ke file, dipakai untuk dev lokal)
+# Penyimpanan utama aplikasi: PostgreSQL. Format standar
+# postgresql://user:password@host:port/dbname (Render Postgres, Supabase, Neon,
+# Railway, dll semua expose connection string dengan format ini).
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# --- Legacy: Google Sheets ---------------------------------------------------
+# Konfigurasi di bawah ini HANYA dipakai oleh scripts/migrate_from_sheets.py
+# (migrasi satu kali dari Google Sheets ke Postgres). Aplikasi utama (app.py,
+# sync.py, member_store.py) sudah sepenuhnya memakai Postgres, bukan Sheets ini.
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "credentials/google-service-account.json")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 GOOGLE_SHEET_WORKSHEET = os.getenv("GOOGLE_SHEET_WORKSHEET", "Raw_Pacer")
-
-# Arsip permanen: setiap sync di-upsert ke sini juga, TIDAK PERNAH dipangkas —
-# ini yang menjamin histori tidak pernah hilang meski sheet "live" di atas
-# dibatasi umurnya (lihat RAW_PACER_LIVE_RETENTION_DAYS).
 GOOGLE_SHEET_HISTORY_WORKSHEET = os.getenv("GOOGLE_SHEET_HISTORY_WORKSHEET", "Raw_Pacer_History")
-
-# Berapa hari terakhir yang disimpan di sheet "live" (GOOGLE_SHEET_WORKSHEET) untuk
-# dashboard. Baris yang lebih tua dari ini dipangkas dari sheet live SETELAH aman
-# ter-upsert ke GOOGLE_SHEET_HISTORY_WORKSHEET, supaya sheet live tetap ringkas dan
-# tidak terus membesar tanpa batas (tiap sync clear+tulis ulang seluruh sheet live).
-RAW_PACER_LIVE_RETENTION_DAYS = int(os.getenv("RAW_PACER_LIVE_RETENTION_DAYS", "30"))
-
-# Spreadsheet TERPISAH khusus token anggota (private, hanya di-share ke service account + admin)
 GOOGLE_MEMBERS_SHEET_ID = os.getenv("GOOGLE_MEMBERS_SHEET_ID")
 GOOGLE_MEMBERS_WORKSHEET = os.getenv("GOOGLE_MEMBERS_WORKSHEET", "Members")
+# -----------------------------------------------------------------------------
 
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "change-me")
 
