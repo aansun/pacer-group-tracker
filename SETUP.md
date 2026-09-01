@@ -77,7 +77,7 @@ pacer-group-tracker/
 │   └── sync_state.py          # Status sync terakhir (in-memory, untuk tampilan dashboard)
 ├── scripts/
 │   ├── migrate_from_sheets.py    # Migrasi satu kali: Google Sheets -> Postgres (read-only ke Sheets)
-│   └── backfill_steps_august.py  # Contoh backfill histori langsung dari Pacer API (steps-only)
+│   └── backfill_steps.py         # Backfill histori langsung dari Pacer API (steps-only), rentang tanggal via argumen
 └── templates/
     ├── login.html              # Halaman login
     └── index.html              # Dashboard utama

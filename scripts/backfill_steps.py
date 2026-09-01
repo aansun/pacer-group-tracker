@@ -1,4 +1,4 @@
-"""Backfill langkah (steps) bulan Agustus 2026 langsung dari Pacer API.
+"""Backfill langkah (steps) untuk rentang tanggal tertentu langsung dari Pacer API.
 
 Dipakai untuk mengisi histori yang tidak bisa dimigrasikan dari Google Sheets
 (baris lama dari sebelum kolom "User ID" ditambahkan, sebelum ~23 Agustus —
@@ -9,9 +9,10 @@ benar dari migrasi Sheets), atau default 0 kalau baris baru.
 
 Cara pakai:
     source venv/bin/activate
-    python -m scripts.backfill_steps_august
+    python -m scripts.backfill_steps 2026-07-11 2026-07-31
 """
 import datetime
+import sys
 
 import psycopg2.extras
 
@@ -19,11 +20,8 @@ from services import db, member_store
 from services.pacer_client import PacerClient
 from sync import _ensure_fresh_token
 
-START_DATE = datetime.date(2026, 8, 1)
-END_DATE = datetime.date(2026, 8, 31)
 
-
-def backfill():
+def backfill(start_date, end_date):
     db.init_schema()
     members = member_store.list_members()
 
@@ -37,8 +35,8 @@ def backfill():
             client = PacerClient(access_token)
             daily = client.get_daily_activity_summary(
                 user_id,
-                start_date=START_DATE.isoformat(),
-                end_date=END_DATE.isoformat(),
+                start_date=start_date.isoformat(),
+                end_date=end_date.isoformat(),
             )
         except Exception as exc:
             failed.append((display_name, str(exc)))
@@ -51,7 +49,7 @@ def backfill():
             if day.get("recorded_for_date")
         ]
         if not rows:
-            print(f"  {display_name}: tidak ada data Agustus")
+            print(f"  {display_name}: tidak ada data pada rentang ini")
             continue
 
         with db.get_cursor(commit=True) as cur:
@@ -69,11 +67,16 @@ def backfill():
         total_rows += len(rows)
         print(f"  {display_name}: {len(rows)} hari")
 
-    print(f"\nSelesai. {total_rows} baris steps di-upsert dari Pacer API ({START_DATE} s/d {END_DATE}).")
+    print(f"\nSelesai. {total_rows} baris steps di-upsert dari Pacer API ({start_date} s/d {end_date}).")
     if failed:
         print(f"Gagal untuk {len(failed)} anggota: {failed}")
     return total_rows, failed
 
 
 if __name__ == "__main__":
-    backfill()
+    if len(sys.argv) != 3:
+        print("Usage: python -m scripts.backfill_steps YYYY-MM-DD YYYY-MM-DD")
+        sys.exit(1)
+    _start = datetime.date.fromisoformat(sys.argv[1])
+    _end = datetime.date.fromisoformat(sys.argv[2])
+    backfill(_start, _end)
