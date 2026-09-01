@@ -17,6 +17,28 @@ import config
 from services import db, sheets_client
 
 
+def _parse_number(value):
+    """Angka di sel Sheets kadang diformat ulang oleh Google Sheets UI pakai
+    locale Indonesia (koma sebagai desimal, titik sebagai pemisah ribuan) kalau
+    pernah disentuh manual — mis. kalori "513,91" atau "1.234,56". Coba parse
+    apa adanya dulu, baru fallback ke format Indonesia, supaya nilainya tetap
+    ke-parse dengan benar alih-alih hilang jadi 0.
+    """
+    if value in (None, ""):
+        return 0
+    if isinstance(value, (int, float)):
+        return value
+    s = str(value).strip()
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    try:
+        return float(s.replace(".", "").replace(",", "."))
+    except ValueError:
+        return 0
+
+
 def _row_key(row):
     """Sama seperti sync.py versi lama: identitas unik per baris aktivitas.
 
@@ -99,11 +121,11 @@ def migrate_activities():
             skipped_unknown_member.append((user_id, row[1]))
             continue
 
-        steps = row[2] if len(row) > 2 else 0
-        distance = row[3] if len(row) > 3 else 0
-        calories = row[4] if len(row) > 4 else 0
-        active_time = row[5] if len(row) > 5 else 0
-        to_insert.append((user_id, row[1], steps or 0, distance or 0, calories or 0, active_time or 0))
+        steps = int(round(_parse_number(row[2] if len(row) > 2 else 0)))
+        distance = _parse_number(row[3] if len(row) > 3 else 0)
+        calories = _parse_number(row[4] if len(row) > 4 else 0)
+        active_time = int(round(_parse_number(row[5] if len(row) > 5 else 0)))
+        to_insert.append((user_id, row[1], steps, distance, calories, active_time))
 
     if to_insert:
         import psycopg2.extras
