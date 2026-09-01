@@ -37,11 +37,11 @@ Panduan instalasi, konfigurasi, deploy, dan troubleshooting untuk **Pacer Group 
 └───────────────────────────────────────────────────┘
                         │
                         ▼
-             ┌───────────────────────┐
-             │      PostgreSQL        │
-             │  • members             │
-             │  • activities          │
-             │  • sync_runs           │
+             ┌───────────────────────┐         ┌─────────────────────┐
+             │      PostgreSQL        │ ──────▶ │   Google Sheets      │
+             │  • members             │ export  │   Raw_Pacer (mirror  │
+             │  • activities          │ read-only│   90 hari terakhir) │
+             │  • sync_runs           │         └─────────────────────┘
              └───────────────────────┘
 ```
 
@@ -51,7 +51,8 @@ Panduan instalasi, konfigurasi, deploy, dan troubleshooting untuk **Pacer Group 
 2. Anggota grup klik **"Hubungkan Anggota"** → diarahkan ke halaman otorisasi Pacer → setelah setuju, token OAuth (access & refresh token) disimpan ke tabel **`members`**.
 3. Proses sinkronisasi (`sync.py`) mengambil ringkasan aktivitas harian tiap anggota dari Pacer API menggunakan token tersimpan, lalu meng-**upsert**-nya (per anggota + tanggal, `ON CONFLICT (user_id, activity_date)`) ke tabel **`activities`**. Histori tersimpan permanen tanpa batas — tidak ada lagi konsep sheet "live" vs "arsip" seperti di skema Google Sheets sebelumnya, karena Postgres tidak perlu clear+tulis-ulang seluruh tabel setiap sync.
 4. Kegagalan per-anggota (mis. `refresh_token` yang sudah dicabut di sisi Pacer) di-*catch* dan dilewati — tidak menggagalkan sync anggota lain. Daftarnya ditampilkan di dashboard.
-5. Sinkronisasi dapat dipicu oleh tiga sumber: **terjadwal** (APScheduler, 5x sehari), **manual** (tombol di dashboard), atau **cron eksternal** (endpoint khusus dengan token rahasia, untuk menjaga aplikasi tetap "bangun" di hosting free tier).
+5. Setelah Postgres ter-update, `sync.py` juga meng-export cerminan `SHEETS_EXPORT_RETENTION_DAYS` hari terakhir (default 90) ke sheet **Raw_Pacer** yang sudah ada — untuk kebutuhan laporan/pivot table. Postgres tetap satu-satunya sumber kebenaran permanen; export ini *read-only bagi Sheets* (Sheets tidak pernah dibaca balik) dan *best-effort* (gagal export tidak menggagalkan sync ke Postgres).
+6. Sinkronisasi dapat dipicu oleh tiga sumber: **terjadwal** (APScheduler, 5x sehari), **manual** (tombol di dashboard), atau **cron eksternal** (endpoint khusus dengan token rahasia, untuk menjaga aplikasi tetap "bangun" di hosting free tier).
 
 ### Kenapa pindah dari Google Sheets ke Postgres
 
@@ -71,10 +72,12 @@ pacer-group-tracker/
 │   ├── pacer_client.py        # OAuth flow & wrapper pemanggilan Pacer API
 │   ├── db.py                  # Connection pool Postgres + init schema (members, activities, sync_runs)
 │   ├── member_store.py        # CRUD data anggota & token, tabel "members"
-│   ├── sheets_client.py       # Legacy — helper baca/tulis Google Sheets, dipakai HANYA oleh scripts/migrate_from_sheets.py
+│   ├── sheets_client.py       # Helper generik baca/tulis Google Sheets (via gspread)
+│   ├── sheets_export.py       # Export read-only Postgres -> Sheets (dipanggil tiap sync, lihat Arsitektur)
 │   └── sync_state.py          # Status sync terakhir (in-memory, untuk tampilan dashboard)
 ├── scripts/
-│   └── migrate_from_sheets.py # Migrasi satu kali: Google Sheets -> Postgres (read-only ke Sheets)
+│   ├── migrate_from_sheets.py    # Migrasi satu kali: Google Sheets -> Postgres (read-only ke Sheets)
+│   └── backfill_steps_august.py  # Contoh backfill histori langsung dari Pacer API (steps-only)
 └── templates/
     ├── login.html              # Halaman login
     └── index.html              # Dashboard utama
@@ -113,7 +116,11 @@ Salin `.env.example` menjadi `.env`, lalu isi seluruh variabel berikut:
 | `LOGIN_USERNAME` / `LOGIN_PASSWORD` | ✅ | Kredensial login dashboard — **wajib diganti dari default** |
 | `CRON_SYNC_TOKEN` | opsional | Token rahasia untuk endpoint `/sync/cron`. Kosongkan untuk menonaktifkan endpoint tersebut |
 | `SESSION_TIMEOUT_MINUTES` | opsional | Lama idle sebelum auto-logout, default `60` menit |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` / `GOOGLE_SHEET_ID` / dst | legacy | HANYA dipakai `scripts/migrate_from_sheets.py`. Boleh dihapus dari environment setelah migrasi selesai |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` / `GOOGLE_SERVICE_ACCOUNT_FILE` | opsional | Kredensial Service Account Google Sheets. Diperlukan untuk export otomatis ke Sheets (lihat di bawah) maupun migrasi lama |
+| `GOOGLE_SHEET_ID` | opsional | ID/URL spreadsheet tujuan export. **Kosongkan untuk menonaktifkan export ke Sheets sepenuhnya** — aplikasi tetap jalan normal, cukup pakai Postgres |
+| `GOOGLE_SHEET_WORKSHEET` | opsional | Nama tab tujuan export, default `Raw_Pacer` (sheet yang sama seperti versi lama) |
+| `SHEETS_EXPORT_RETENTION_DAYS` | opsional | Berapa hari terakhir yang di-export ke Sheets, default `90`. Histori penuh selalu ada permanen di Postgres — ini cuma cerminan untuk laporan |
+| `GOOGLE_MEMBERS_SHEET_ID` / `GOOGLE_MEMBERS_WORKSHEET` | legacy | HANYA dipakai `scripts/migrate_from_sheets.py`. Boleh dihapus dari environment setelah migrasi selesai |
 
 ## Menjalankan Secara Lokal
 

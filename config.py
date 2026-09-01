@@ -14,14 +14,23 @@ PACER_REDIRECT_URI = os.getenv("PACER_REDIRECT_URI")
 # Railway, dll semua expose connection string dengan format ini).
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# --- Legacy: Google Sheets ---------------------------------------------------
-# Konfigurasi di bawah ini HANYA dipakai oleh scripts/migrate_from_sheets.py
-# (migrasi satu kali dari Google Sheets ke Postgres). Aplikasi utama (app.py,
-# sync.py, member_store.py) sudah sepenuhnya memakai Postgres, bukan Sheets ini.
+# --- Google Sheets: export read-only + migrasi lama --------------------------
+# Postgres tetap satu-satunya sumber kebenaran permanen. GOOGLE_SHEET_ID/
+# GOOGLE_SHEET_WORKSHEET sekarang dipakai sebagai TUJUAN EXPORT read-only
+# (services/sheets_export.py, dipanggil tiap sync) supaya sheet yang sudah ada
+# tetap ke-update otomatis untuk kebutuhan laporan/pivot table. Kosongkan
+# GOOGLE_SHEET_ID untuk menonaktifkan export ini sepenuhnya.
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "credentials/google-service-account.json")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 GOOGLE_SHEET_WORKSHEET = os.getenv("GOOGLE_SHEET_WORKSHEET", "Raw_Pacer")
+
+# Sheet cuma perlu jadi cerminan N hari terakhir (bukan histori penuh — itu selalu
+# ada permanen di Postgres) supaya tetap ringan & tidak kena rate limit Sheets API.
+SHEETS_EXPORT_RETENTION_DAYS = int(os.getenv("SHEETS_EXPORT_RETENTION_DAYS", "90"))
+
+# GOOGLE_SHEET_HISTORY_WORKSHEET / GOOGLE_MEMBERS_* di bawah ini legacy — HANYA
+# dipakai scripts/migrate_from_sheets.py (migrasi satu kali dari Sheets lama).
 GOOGLE_SHEET_HISTORY_WORKSHEET = os.getenv("GOOGLE_SHEET_HISTORY_WORKSHEET", "Raw_Pacer_History")
 GOOGLE_MEMBERS_SHEET_ID = os.getenv("GOOGLE_MEMBERS_SHEET_ID")
 GOOGLE_MEMBERS_WORKSHEET = os.getenv("GOOGLE_MEMBERS_WORKSHEET", "Members")

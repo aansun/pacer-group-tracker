@@ -3,7 +3,8 @@ import time
 
 import psycopg2.extras
 
-from services import db, member_store
+import config
+from services import db, member_store, sheets_export
 from services.pacer_client import PacerClient, refresh_access_token
 
 FETCH_DAYS_BACK = 2  # cukup untuk menangkap update hari ini + koreksi keterlambatan sync sebelumnya
@@ -91,6 +92,11 @@ def run_sync():
     tabel `activities` di Postgres. Histori tersimpan permanen, tidak pernah
     dipangkas — beda dari skema Google Sheets sebelumnya yang perlu sheet
     "live" + arsip terpisah karena keterbatasan ukuran/API sheet.
+
+    Setelah Postgres ter-update, coba export cerminan N hari terakhir ke
+    Google Sheets yang sudah ada (lihat services/sheets_export.py) supaya
+    tetap enak dilihat/dipakai pivot table. Ini best-effort — kalau export
+    gagal (quota, jaringan, dsb), sync ke Postgres TETAP dianggap berhasil.
     """
     new_rows, failed_members = _fetch_recent_rows(FETCH_DAYS_BACK)
     _upsert_activities(new_rows)
@@ -105,6 +111,13 @@ def run_sync():
     )
     if failed_members:
         print(f"Gagal sync untuk {len(failed_members)} anggota: {failed_members}")
+
+    try:
+        exported = sheets_export.export_recent_activities()
+        if exported is not None:
+            print(f"Export ke Google Sheets: {exported} baris ({config.SHEETS_EXPORT_RETENTION_DAYS} hari terakhir)")
+    except Exception as exc:
+        print(f"PERINGATAN: export ke Google Sheets gagal, Postgres tetap aman: {exc}")
 
     return len(new_rows), total_count, failed_members
 
