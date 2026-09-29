@@ -47,6 +47,12 @@ FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "change-me")
 LOGIN_USERNAME = os.getenv("LOGIN_USERNAME", "admin")
 LOGIN_PASSWORD = os.getenv("LOGIN_PASSWORD", "change-me")
 
+# Password KEDUA khusus untuk menghapus anggota (beda dari LOGIN_PASSWORD) —
+# lapisan proteksi tambahan karena hapus anggota ikut menghapus PERMANEN
+# seluruh histori aktivitasnya (ON DELETE CASCADE). Kosongkan untuk
+# menonaktifkan fitur hapus sepenuhnya (fail closed, bukan fail open).
+DELETE_MEMBER_PASSWORD = os.getenv("DELETE_MEMBER_PASSWORD", "")
+
 # Token rahasia khusus untuk trigger sync dari cron eksternal (mis. cron-job.org),
 # tanpa perlu login/session. Kosongkan untuk menonaktifkan endpoint ini.
 CRON_SYNC_TOKEN = os.getenv("CRON_SYNC_TOKEN", "")

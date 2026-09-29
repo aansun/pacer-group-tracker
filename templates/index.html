@@ -165,6 +165,32 @@
     .member-id { font-size: 11.5px; color: var(--muted); font-family: monospace; }
     .empty-state { text-align: center; color: var(--muted); font-size: 13.5px; padding: 20px 0; }
 
+    .member-info { flex: 1; min-width: 0; }
+    .delete-box { position: relative; flex-shrink: 0; }
+    .delete-box summary {
+      list-style: none; cursor: pointer; font-size: 12px; font-weight: 600;
+      color: #b91c1c; padding: 5px 10px; border-radius: 8px;
+      border: 1px solid #fecaca; background: #fff; user-select: none;
+    }
+    .delete-box summary::-webkit-details-marker { display: none; }
+    .delete-box summary::marker { content: ""; }
+    .delete-box[open] summary { background: #fef2f2; }
+    .delete-form {
+      position: absolute; right: 0; top: calc(100% + 6px); z-index: 5;
+      background: #fff; border: 1px solid var(--border); border-radius: 10px;
+      box-shadow: 0 10px 24px -10px rgba(15, 23, 42, 0.25);
+      padding: 10px; display: flex; gap: 6px; white-space: nowrap;
+    }
+    .delete-form input[type="password"] {
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 6px 8px; font-size: 12.5px; width: 130px;
+    }
+    .delete-form button {
+      background: #dc2626; color: #fff; border: none; border-radius: 6px;
+      padding: 6px 10px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    }
+    .delete-form button:hover { background: #b91c1c; }
+
     .card.alert { background: #fffbeb; border-color: #fde68a; }
     .count-badge.warn { background: #fef3c7; color: #b45309; }
     .avatar.avatar-warn { background: linear-gradient(135deg, #fbbf24, #d97706); }
@@ -299,10 +325,23 @@
         {% for user_id, member in members.items() %}
           <li class="member-row">
             <div class="avatar">{{ member.display_name[:1]|upper }}</div>
-            <div>
+            <div class="member-info">
               <div class="member-name">{{ member.display_name }}</div>
               <div class="member-id">{{ user_id }}</div>
             </div>
+            <details class="delete-box">
+              <summary>Hapus</summary>
+              <form
+                method="post"
+                action="{{ url_for('delete_member', user_id=user_id) }}"
+                class="delete-form"
+                onsubmit="return confirm('Yakin hapus {{ member.display_name }}? Seluruh histori aktivitasnya akan terhapus PERMANEN dan tidak bisa dikembalikan.');"
+              >
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="password" name="password" placeholder="Password hapus" required autocomplete="off">
+                <button type="submit">Hapus</button>
+              </form>
+            </details>
           </li>
         {% else %}
           <li class="empty-state">Belum ada anggota terhubung.</li>

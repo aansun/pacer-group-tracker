@@ -114,6 +114,7 @@ Salin `.env.example` menjadi `.env`, lalu isi seluruh variabel berikut:
 | `DATABASE_URL` | ✅ | Connection string PostgreSQL. Untuk Supabase, pakai **Transaction pooler** (port `6543`, host `aws-0-<region>.pooler.supabase.com`) — bukan direct connection (port `5432`), supaya tidak cepat kehabisan slot koneksi. Tabel dibuat otomatis di schema `itd_pacer_tracker` saat aplikasi start (lihat [Isolasi Schema](#keamanan)) — aman dipakai di database yang di-share dengan aplikasi lain |
 | `FLASK_SECRET_KEY` | ✅ | Random string panjang untuk signing session cookie |
 | `LOGIN_USERNAME` / `LOGIN_PASSWORD` | ✅ | Kredensial login dashboard — **wajib diganti dari default** |
+| `DELETE_MEMBER_PASSWORD` | opsional | Password KEDUA (beda dari `LOGIN_PASSWORD`) untuk konfirmasi hapus anggota — hapus anggota ikut menghapus permanen seluruh histori aktivitasnya. Kosongkan untuk menonaktifkan fitur hapus anggota sepenuhnya |
 | `CRON_SYNC_TOKEN` | opsional | Token rahasia untuk endpoint `/sync/cron`. Kosongkan untuk menonaktifkan endpoint tersebut |
 | `SESSION_TIMEOUT_MINUTES` | opsional | Lama idle sebelum auto-logout, default `60` menit |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` / `GOOGLE_SERVICE_ACCOUNT_FILE` | opsional | Kredensial Service Account Google Sheets. Diperlukan untuk export otomatis ke Sheets (lihat di bawah) maupun migrasi lama |
@@ -221,6 +222,7 @@ Response: `{"ok": true, "sync_in_progress": false, "last_sync": {"source": "cron
 - **Perbandingan kredensial aman** — pengecekan username/password login menggunakan `secrets.compare_digest`.
 - **Token OAuth anggota** disimpan di tabel `members` di database yang sama — pastikan `DATABASE_URL` hanya diberikan ke pihak yang berwenang (admin), sama seperti perlakuan kredensial sensitif lain.
 - **Isolasi schema (`itd_pacer_tracker`)** — kalau `DATABASE_URL` menunjuk ke database yang di-*share* dengan aplikasi lain (mis. satu project Supabase dipakai beberapa app), seluruh tabel project ini hidup di schema `itd_pacer_tracker`, bukan `public`. Setiap koneksi di-set `search_path` khusus ke schema ini (lihat `services/db.py`), jadi query di app ini tidak mungkin salah baca/tulis ke tabel milik aplikasi lain walau kebetulan nama tabelnya sama, dan `init_schema()` (`CREATE ... IF NOT EXISTS`) tidak pernah menyentuh objek di schema lain.
+- **Hapus anggota pakai password kedua** — tombol "Hapus" di tiap baris anggota (dashboard) minta `DELETE_MEMBER_PASSWORD`, terpisah dari password login. Ini karena hapus anggota bersifat permanen (`ON DELETE CASCADE` ikut menghapus seluruh histori aktivitasnya) — password kedua mencegah penghapusan tidak sengaja hanya karena sesi dashboard sedang login (mis. laptop admin dipakai orang lain sebentar). Kosongkan `DELETE_MEMBER_PASSWORD` untuk menonaktifkan tombol ini sepenuhnya.
 
 ## Troubleshooting
 

@@ -110,6 +110,15 @@ def members_needing_reconnect(members):
     }
 
 
+def delete_member(user_id):
+    """Hapus anggota permanen. ON DELETE CASCADE (lihat services/db.py) ikut
+    menghapus SELURUH baris activities miliknya — tidak bisa dibatalkan.
+    Return True kalau memang ada baris yang terhapus."""
+    with db.get_cursor(commit=True) as cur:
+        cur.execute("DELETE FROM members WHERE user_id = %s", (user_id,))
+        return cur.rowcount > 0
+
+
 def get_member(user_id):
     with db.get_cursor() as cur:
         cur.execute(

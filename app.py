@@ -187,6 +187,33 @@ def pacer_callback():
     return redirect(url_for("index"))
 
 
+@app.route("/member/<user_id>/delete", methods=["POST"])
+@login_required
+def delete_member(user_id):
+    """Hapus anggota permanen (histori aktivitasnya ikut terhapus lewat
+    ON DELETE CASCADE). Dilindungi password KEDUA (DELETE_MEMBER_PASSWORD,
+    beda dari password login) sebagai lapisan proteksi tambahan — hapus
+    anggota tidak bisa dibatalkan."""
+    expected = config.DELETE_MEMBER_PASSWORD
+    if not expected:
+        flash("Fitur hapus anggota belum diaktifkan (DELETE_MEMBER_PASSWORD belum diset di server).", "error")
+        return redirect(url_for("index"))
+
+    provided = request.form.get("password", "")
+    if not secrets.compare_digest(provided, expected):
+        flash("Password hapus salah — anggota tidak dihapus.", "error")
+        return redirect(url_for("index"))
+
+    member = member_store.get_member(user_id)
+    display_name = member["display_name"] if member else user_id
+    if member_store.delete_member(user_id):
+        flash(f"Anggota '{display_name}' dan seluruh histori aktivitasnya berhasil dihapus.", "success")
+    else:
+        flash(f"Anggota '{display_name}' tidak ditemukan (mungkin sudah terhapus).", "error")
+
+    return redirect(url_for("index"))
+
+
 @app.route("/sync", methods=["POST"])
 @login_required
 def sync():
