@@ -1,6 +1,7 @@
 import datetime
 import functools
 import secrets
+import threading
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.combining import OrTrigger
@@ -90,14 +91,35 @@ def logout():
     return redirect(url_for("login"))
 
 
-def scheduled_sync():
-    print(f"[scheduler] menjalankan sync otomatis {datetime.datetime.now().isoformat()}")
+# Sync (fetch Pacer API + upsert Postgres + export ke 2 sheet) makin lama makin
+# lambat seiring histori & jumlah anggota bertambah — sudah pernah melebihi
+# timeout worker Gunicorn (120s) kalau dijalankan langsung di dalam request
+# HTTP /sync atau /sync/cron, bikin gunicorn membunuh worker paksa (SystemExit
+# di tengah request) dan browser/cron caller cuma lihat 500 walau sync-nya
+# sendiri sebenarnya jalan/selesai di background. Makanya SEMUA jalur sync
+# (terjadwal, manual, cron) dijalankan di thread terpisah dan endpoint HTTP
+# langsung return tanpa menunggu — samakan dengan pola scheduled_sync yang
+# dari awal memang begini (APScheduler jalan di background thread-nya sendiri).
+_sync_lock = threading.Lock()
+
+
+def _perform_sync(source):
+    if not _sync_lock.acquire(blocking=False):
+        print(f"[{source}] sync dilewati — sync lain sedang berjalan")
+        return
     try:
+        print(f"[{source}] menjalankan sync {datetime.datetime.now().isoformat()}")
         updated_count, total_count, failed_members = run_sync()
-        sync_state.record("scheduled", updated_count, total_count, failed_members=failed_members)
+        sync_state.record(source, updated_count, total_count, failed_members=failed_members)
     except Exception as exc:
-        print(f"[scheduler] sync otomatis gagal: {exc}")
-        sync_state.record("scheduled", 0, 0, error=str(exc))
+        print(f"[{source}] sync gagal: {exc}")
+        sync_state.record(source, 0, 0, error=str(exc))
+    finally:
+        _sync_lock.release()
+
+
+def scheduled_sync():
+    _perform_sync("scheduled")
 
 
 @app.route("/", methods=["GET"])
@@ -164,22 +186,15 @@ def pacer_callback():
 @app.route("/sync", methods=["POST"])
 @login_required
 def sync():
-    try:
-        updated_count, total_count, failed_members = run_sync()
-        sync_state.record("manual", updated_count, total_count, failed_members=failed_members)
+    if _sync_lock.locked():
+        flash("Sync lain sedang berjalan — tunggu sampai selesai, lalu refresh halaman ini.", "error")
+    else:
+        threading.Thread(target=_perform_sync, args=("manual",), daemon=True).start()
         flash(
-            f"Sync berhasil: {updated_count} baris diperbarui, {total_count} baris total di database.",
+            "Sync dimulai di background. Prosesnya bisa makan waktu 1-2 menit — "
+            "refresh halaman ini sebentar lagi untuk lihat hasilnya di kartu Riwayat Sync.",
             "success",
         )
-        if failed_members:
-            names = ", ".join(name for name, _ in failed_members)
-            flash(
-                f"{len(failed_members)} anggota gagal disinkron, perlu hubungkan ulang: {names}.",
-                "error",
-            )
-    except Exception as exc:
-        sync_state.record("manual", 0, 0, error=str(exc))
-        flash(f"Sync gagal: {exc}", "error")
     return redirect(url_for("index"))
 
 
@@ -194,6 +209,10 @@ def sync_cron():
     Autentikasi pakai token rahasia (CRON_SYNC_TOKEN), dikirim via:
     - header 'X-Cron-Token: <token>', atau
     - query/body param '?token=<token>'
+
+    Sync dijalankan di background thread dan endpoint ini langsung return —
+    tidak menunggu sampai selesai (lihat catatan di _perform_sync). Untuk cek
+    hasil akhirnya, pakai GET /sync/status.
     """
     expected = config.CRON_SYNC_TOKEN
     if not expected:
@@ -203,18 +222,27 @@ def sync_cron():
     if not secrets.compare_digest(provided, expected):
         return jsonify({"ok": False, "error": "token tidak valid"}), 401
 
-    try:
-        updated_count, total_count, failed_members = run_sync()
-        sync_state.record("cron", updated_count, total_count, failed_members=failed_members)
-        return jsonify({
-            "ok": True,
-            "updated_count": updated_count,
-            "total_count": total_count,
-            "failed_members": [name for name, _ in failed_members],
-        })
-    except Exception as exc:
-        sync_state.record("cron", 0, 0, error=str(exc))
-        return jsonify({"ok": False, "error": str(exc)}), 500
+    if _sync_lock.locked():
+        return jsonify({"ok": True, "status": "skipped", "reason": "sync lain sedang berjalan"})
+
+    threading.Thread(target=_perform_sync, args=("cron",), daemon=True).start()
+    return jsonify({"ok": True, "status": "started"})
+
+
+@app.route("/sync/status", methods=["GET"])
+@csrf.exempt  # NOSONAR - read-only, autentikasi token sama seperti /sync/cron
+def sync_status():
+    """Cek hasil sync terakhir (dipakai untuk verifikasi setelah /sync/cron
+    yang sekarang async). Autentikasi sama seperti /sync/cron."""
+    expected = config.CRON_SYNC_TOKEN
+    if not expected:
+        return jsonify({"ok": False, "error": "CRON_SYNC_TOKEN belum diset di server"}), 503
+
+    provided = request.headers.get("X-Cron-Token") or request.values.get("token") or ""
+    if not secrets.compare_digest(provided, expected):
+        return jsonify({"ok": False, "error": "token tidak valid"}), 401
+
+    return jsonify({"ok": True, "sync_in_progress": _sync_lock.locked(), "last_sync": sync_state.get()})
 
 
 scheduler = BackgroundScheduler(timezone="Asia/Makassar")

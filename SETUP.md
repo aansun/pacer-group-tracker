@@ -173,6 +173,8 @@ Setelah migrasi, verifikasi jumlah anggota & baris aktivitas di output script se
 
 Karena hosting free tier "tidur" setelah idle, jadwal sync internal (APScheduler) bisa gagal terpicu bila aplikasi sedang tidak aktif. Untuk mengatasi ini, tersedia endpoint khusus `POST /sync/cron` yang bisa dipanggil tanpa login/session, cukup dengan token rahasia.
 
+> **Async sejak histori & jumlah anggota bertambah besar:** sync penuh (fetch Pacer API + upsert database + export ke 2 sheet) bisa makan waktu >1 menit, pernah melebihi timeout worker Gunicorn (120 detik) kalau dijalankan langsung di dalam request HTTP — hasilnya request mati (500) walau sync-nya sendiri sebenarnya selesai/jalan normal di belakang layar. Makanya `/sync` (tombol manual) dan `/sync/cron` sekarang cuma MEMICU sync di background thread lalu langsung return — tidak menunggu selesai. Cek hasil akhirnya lewat `GET /sync/status` (lihat di bawah) atau kartu "Riwayat Sync Terakhir" di dashboard.
+
 ### Langkah setup
 
 1. Set environment variable `CRON_SYNC_TOKEN` di Render (gunakan random string panjang, contoh generate: `python -c "import secrets; print(secrets.token_urlsafe(32))"`).
@@ -191,16 +193,29 @@ Karena hosting free tier "tidur" setelah idle, jadwal sync internal (APScheduler
 
 ### Response
 
+`/sync/cron` langsung return begitu sync DIMULAI (bukan setelah selesai):
+
 | Status | Kondisi |
 |---|---|
-| `200` | Sukses, body: `{"ok": true, "updated_count": 12, "total_count": 340, "failed_members": [...]}` |
+| `200` | `{"ok": true, "status": "started"}` — sync dimulai di background |
+| `200` | `{"ok": true, "status": "skipped", "reason": "..."}` — dilewati karena ada sync lain yang masih berjalan |
 | `401` | Token tidak valid |
 | `503` | `CRON_SYNC_TOKEN` belum diset di server (endpoint nonaktif secara default) |
-| `500` | Sync gagal (mis. error koneksi ke Pacer API/database), body berisi pesan error |
+
+### Cek hasil sync (`GET /sync/status`)
+
+Karena `/sync/cron` async, gunakan endpoint ini (autentikasi sama, header/query `X-Cron-Token`/`token`) untuk melihat hasil sync terakhir:
+
+```
+GET https://xxx.onrender.com/sync/status
+Header: X-Cron-Token: <isi CRON_SYNC_TOKEN>
+```
+
+Response: `{"ok": true, "sync_in_progress": false, "last_sync": {"source": "cron", "updated_count": 56, "total_count": 2483, "failed_members": [], "error": null, "last_run_at": "..."}}`
 
 ## Keamanan
 
-- **Login gate** — seluruh route (kecuali `/login` dan `/sync/cron`) memerlukan session aktif.
+- **Login gate** — seluruh route (kecuali `/login`, `/sync/cron`, dan `/sync/status`) memerlukan session aktif.
 - **Session timeout otomatis** — session berakhir setelah tidak ada aktivitas selama `SESSION_TIMEOUT_MINUTES` (default 60 menit), dihitung secara *sliding* (timer di-reset setiap kali ada request, bukan dari waktu login pertama).
 - **Token cron terpisah** — endpoint `/sync/cron` menggunakan mekanisme autentikasi terpisah (token rahasia, dibandingkan dengan `secrets.compare_digest` untuk mencegah *timing attack*), sehingga tidak perlu membuka akses `/sync` (yang butuh login) ke publik.
 - **Perbandingan kredensial aman** — pengecekan username/password login menggunakan `secrets.compare_digest`.
@@ -218,3 +233,5 @@ Karena hosting free tier "tidur" setelah idle, jadwal sync internal (APScheduler
 | Jadwal sync tidak jalan otomatis | Kemungkinan aplikasi sedang "tidur" (free tier) — gunakan cron eksternal sebagai pemicu tambahan |
 | Anggota daftar Pacer via **Sign in with Apple + Hide My Email**, macet di halaman "Authorize" (khususnya Safari) | Ini terjadi di halaman `developer.mypacer.com`, di luar kendali aplikasi ini. Workaround: matikan "Prevent Cross-Site Tracking" di Safari untuk proses connect ini, coba browser lain, atau ubah ke share email asli lewat Settings → Apple ID → Sign-In & Security → Sign in with Apple. Jika berhasil connect, aplikasi ini sudah menangani `display_name` kosong dengan fallback ke `user_id` agar data anggota tidak tertukar. |
 | Setelah migrasi, sebagian baris aktivitas lama tidak muncul | Cek output `scripts/migrate_from_sheets.py` — baris lama tanpa kolom "User ID" atau dengan `user_id` yang tidak ada di tabel `members` sengaja dilewati (dicetak sebagai peringatan) karena tidak bisa dipetakan ke anggota dengan aman |
+| Klik "Sync Sekarang" / `/sync/cron` balik 500, tapi datanya ternyata ter-update | Sebelum sync dibuat async, sync yang lama (>120 detik) bikin Gunicorn membunuh worker (`SystemExit` di tengah request) walau sync-nya sendiri jalan/selesai normal di belakang layar. Sudah diperbaiki — `/sync` dan `/sync/cron` sekarang cuma memicu sync di background thread lalu langsung return; cek hasilnya lewat `GET /sync/status` atau dashboard |
+| Database Postgres tiba-tiba error "tenant/user ... not found" (Supabase) | Project Supabase free tier auto-pause setelah idle lama. Buka Supabase Dashboard, resume project-nya, tunggu 1-2 menit untuk propagasi, lalu redeploy/restart aplikasi. Kalau project ref-nya berubah (host lama sudah tidak resolve sama sekali), ambil ulang connection string terbaru dan update `DATABASE_URL` |
