@@ -272,9 +272,6 @@
         ⚠️ Perlu Hubungkan Ulang
         <span class="count-badge warn">{{ needing_reconnect|length }}</span>
       </div>
-      <p class="status-line" style="margin-bottom: 14px;">
-        Anggota di bawah ini gagal sync <b>berturut-turut beberapa kali</b> (bukan sekali gangguan biasa dari Pacer) — kemungkinan akses Pacer mereka sudah tidak valid. Minta mereka klik <b>"Hubungkan Anggota"</b> di atas dan login ulang ke akun Pacer masing-masing.
-      </p>
       <ul class="member-list">
         {% for user_id, member in needing_reconnect.items() %}
           <li class="member-row">
