@@ -126,10 +126,14 @@ def scheduled_sync():
 @login_required
 def index():
     members = member_store.list_members()
+    needing_reconnect = member_store.members_needing_reconnect(members)
+    for m in needing_reconnect.values():
+        m["friendly_error"] = member_store.friendly_sync_error(m["last_sync_error"])
     state = sync_state.get()
     return render_template(
         "index.html",
         members=members,
+        needing_reconnect=needing_reconnect,
         state=state,
         schedule_times=SCHEDULE_TIMES,
     )

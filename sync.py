@@ -44,8 +44,10 @@ def _fetch_recent_rows(days_back):
             )
         except Exception as exc:
             failed.append((member["display_name"] or user_id, str(exc)))
+            member_store.mark_sync_error(user_id, str(exc))
             continue
 
+        member_store.clear_sync_error(user_id)
         for day in daily:
             rows.append((
                 user_id,

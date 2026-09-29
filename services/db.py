@@ -37,6 +37,16 @@ CREATE TABLE IF NOT EXISTS members (
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Status sync per-anggota yang PERSISTEN (beda dari sync_state di memori yang
+-- cuma nyimpen hasil sync TERAKHIR dan hilang tiap restart). sync_error_count
+-- dipakai supaya satu kali gagal (blip API sementara dari Pacer) TIDAK
+-- langsung dianggap "perlu hubungkan ulang" — baru ditandai kalau gagal
+-- BERTURUT-TURUT beberapa kali (lihat SYNC_ERROR_THRESHOLD di member_store.py).
+-- Reset ke 0 begitu satu kali saja berhasil.
+ALTER TABLE members ADD COLUMN IF NOT EXISTS sync_error_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE members ADD COLUMN IF NOT EXISTS last_sync_error TEXT;
+ALTER TABLE members ADD COLUMN IF NOT EXISTS last_sync_error_at TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS activities (
     user_id       TEXT NOT NULL REFERENCES members(user_id) ON DELETE CASCADE,
     activity_date DATE NOT NULL,
